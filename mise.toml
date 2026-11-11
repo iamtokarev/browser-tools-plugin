@@ -1,3 +1,7 @@
 [tools]
 python = "3.14"
 uv = "latest"
+
+[tasks.lint]
+description = "Run all pre-commit hooks"
+run = "uv run --locked pre-commit run --all-files --show-diff-on-failure"
