@@ -7,11 +7,27 @@ authors = [
     { name = "Vasilii Tokarev", email = "notsoyunng@gmail.com" }
 ]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "mcp>=2.3,<3",
+    "stagehand==4.4.0",
+    "stagehand-middleware==0.1.2",
+]
 
 [project.scripts]
-browser-tools-plugin = "browser_tools_plugin:main"
+browser-tools = "browser_tools_plugin:main"
 
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+    "pytest-asyncio>=1.4.1.post1",
+    "ty>=0.0.101",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
