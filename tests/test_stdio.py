@@ -6,11 +6,10 @@ import sys
 from pathlib import Path
 
 import anyio
-import pytest
 from mcp import Client, StdioServerParameters
 from mcp_types import TextContent
 
-from tests.conftest import find_chrome, needs_chrome
+from tests.conftest import needs_chrome
 
 COMMAND = [sys.executable, "-c", "from browser_tools_plugin import main; main()"]
 
@@ -22,16 +21,17 @@ def server_env(data_dir: Path) -> dict[str, str]:
 
 
 def chrome_processes_using(path: Path) -> list[str]:
-    out = subprocess.run(
-        ["pgrep", "-f", f"user-data-dir={path}"], capture_output=True, text=True
-    ).stdout
+    out = subprocess.run(["pgrep", "-f", f"user-data-dir={path}"], capture_output=True, text=True).stdout
     return out.split()
 
 
 INIT = [
-    {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-        "protocolVersion": "2025-11-25", "capabilities": {},
-        "clientInfo": {"name": "raw", "version": "0"}}},
+    {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "raw", "version": "0"}},
+    },
     {"jsonrpc": "2.0", "method": "notifications/initialized"},
 ]
 
@@ -41,8 +41,12 @@ def exchange(requests: list[dict], data_dir: Path) -> list[dict]:
     parsed as JSON. A stray non-JSON byte on stdout fails the parse."""
     wanted = sum(1 for r in requests if "id" in r)
     proc = subprocess.Popen(
-        COMMAND, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-        text=True, env=server_env(data_dir),
+        COMMAND,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        env=server_env(data_dir),
     )
     assert proc.stdin is not None and proc.stdout is not None
     lines: list[str] = []
@@ -72,8 +76,7 @@ def test_stdout_carries_only_mcp_messages_and_listing_starts_no_browser(tmp_path
 
 @needs_chrome
 def test_stdout_stays_clean_while_chrome_launches_and_snapshots(tmp_path: Path):
-    call = {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-            "params": {"name": "snapshot", "arguments": {}}}
+    call = {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "snapshot", "arguments": {}}}
     messages = exchange([*INIT, call], tmp_path)
     assert all(m.get("jsonrpc") == "2.0" for m in messages)
     answer = next(m for m in messages if m.get("id") == 2)

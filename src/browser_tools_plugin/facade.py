@@ -71,7 +71,7 @@ class BrowserSession:
             return self._tools
         settings = self._settings
         # The middleware's deadlines are module constants.
-        setattr(_upstream_tools, "PAGE_CAPTURE_DEADLINE_S", settings.capture_timeout)
+        _upstream_tools.PAGE_CAPTURE_DEADLINE_S = settings.capture_timeout
         settings.profile_dir.mkdir(parents=True, exist_ok=True)
         settings.download_dir.mkdir(parents=True, exist_ok=True)
         browser = await local_browser.launch(

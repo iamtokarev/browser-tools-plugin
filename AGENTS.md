@@ -20,4 +20,3 @@ When creating commits or suggesting commit messages, use conventional commit mes
 
 Use Simplified Technical English based on ASD-STE100 for all new or
 modified English prose.
-

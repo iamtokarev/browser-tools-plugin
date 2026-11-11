@@ -38,9 +38,7 @@ async def snapshot_text(client: Client, **arguments: object) -> str:
     return part.text
 
 
-async def test_snapshot_returns_header_and_tree_with_element_ids(
-    session: BrowserSession, fixture_url: str
-):
+async def test_snapshot_returns_header_and_tree_with_element_ids(session: BrowserSession, fixture_url: str):
     async with Client(create_server(session=session)) as client:
         assert not session.launched  # connecting and listing did not launch Chrome
         await snapshot_text(client)  # first call launches the browser, on about:blank
@@ -71,9 +69,7 @@ async def test_blank_page_header_has_empty_title(session: BrowserSession):
     assert text.splitlines()[0] == "Page:  | about:blank"
 
 
-async def test_failed_launch_is_a_tool_error_and_the_next_call_tries_again(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-):
+async def test_failed_launch_is_a_tool_error_and_the_next_call_tries_again(tmp_path, monkeypatch: pytest.MonkeyPatch):
     session = BrowserSession(Settings(data_dir=tmp_path, chrome_path="/nonexistent/chrome"))
     async with Client(create_server(session=session)) as client:
         for _ in range(2):
@@ -82,9 +78,7 @@ async def test_failed_launch_is_a_tool_error_and_the_next_call_tries_again(
             assert not session.launched
 
 
-async def test_capture_deadline_setting_replaces_the_middlewares_constant(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-):
+async def test_capture_deadline_setting_replaces_the_middlewares_constant(tmp_path, monkeypatch: pytest.MonkeyPatch):
     from stagehand_middleware.facade import tools as upstream
 
     monkeypatch.setattr(upstream, "PAGE_CAPTURE_DEADLINE_S", 120.0)  # restored after the test

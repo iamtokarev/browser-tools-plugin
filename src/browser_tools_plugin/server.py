@@ -39,9 +39,7 @@ SNAPSHOT_DESCRIPTION = (
 )
 
 
-def create_server(
-    settings: Settings | None = None, *, session: BrowserSession | None = None
-) -> MCPServer:
+def create_server(settings: Settings | None = None, *, session: BrowserSession | None = None) -> MCPServer:
     """Build the server. Nothing here touches the browser; it launches on first use."""
     session = session or BrowserSession(settings or Settings())
 

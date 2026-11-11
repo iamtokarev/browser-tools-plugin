@@ -46,9 +46,7 @@ async def test_lists_tools_without_launching_the_browser(launch_forbidden: list[
     assert list(tmp_path.iterdir()) == []  # no profile directory created either
 
 
-async def test_snapshot_keeps_upstreams_argument_schema_and_is_read_only(
-    launch_forbidden: list[str], tmp_path
-):
+async def test_snapshot_keeps_upstreams_argument_schema_and_is_read_only(launch_forbidden: list[str], tmp_path):
     async with Client(create_server(Settings(data_dir=tmp_path))) as client:
         (tool,) = (await client.list_tools()).tools
     assert tool.input_schema == UPSTREAM_SNAPSHOT_SCHEMA
