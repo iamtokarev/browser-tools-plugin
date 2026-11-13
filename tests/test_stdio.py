@@ -36,12 +36,12 @@ INIT = [
 ]
 
 
-def exchange(requests: list[dict], data_dir: Path) -> list[dict]:
+def exchange(requests: list[dict], data_dir: Path, command: list[str] | None = None) -> list[dict]:
     """Send requests, wait for one answer per request id, close stdin, return every stdout line
     parsed as JSON. A stray non-JSON byte on stdout fails the parse."""
     wanted = sum(1 for r in requests if "id" in r)
     proc = subprocess.Popen(
-        COMMAND,
+        command or COMMAND,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,

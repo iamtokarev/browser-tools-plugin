@@ -12,6 +12,7 @@ from copy import deepcopy
 from typing import Any
 
 from stagehand import Stagehand, local_browser
+from stagehand.browser import _find_chrome_path
 from stagehand.rpc_client import RPCError
 from stagehand_middleware.facade import tools as _upstream_tools
 from stagehand_middleware.facade.bundle import facade_tools
@@ -20,7 +21,7 @@ from stagehand_middleware.facade.tools import StagehandFacadeTools, sanitize_err
 from .results import NO_VALUE, page_code_text
 from .settings import Settings
 
-__all__ = ["BrowserSession", "RunTimeoutError", "sanitize_error_message", "upstream_tool"]
+__all__ = ["BrowserSession", "RunTimeoutError", "find_chrome", "sanitize_error_message", "upstream_tool"]
 
 
 def upstream_tool(name: str) -> dict[str, Any]:
@@ -29,6 +30,14 @@ def upstream_tool(name: str) -> dict[str, Any]:
         if tool["name"] == name:
             return deepcopy(tool)
     raise KeyError(name)
+
+
+def find_chrome(explicit_path: str | None = None) -> str:
+    """The Chrome that a launch would use: the explicit path, else the SDK's own search.
+
+    Raises RuntimeError when there is none. Nothing is started.
+    """
+    return _find_chrome_path(explicit_path)
 
 
 class RunTimeoutError(Exception):

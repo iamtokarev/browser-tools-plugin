@@ -1,5 +1,6 @@
 import functools
 import http.server
+import os
 import shutil
 import threading
 from collections.abc import Iterator
@@ -46,6 +47,16 @@ def fixture_url() -> Iterator[str]:
     yield f"http://127.0.0.1:{server.server_port}"
     server.shutdown()
     server.server_close()
+
+
+@pytest.fixture(autouse=True)
+def isolated_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test reads the real settings sources: not the user's data directory, not `BROWSER_TOOLS_*`."""
+    for name in list(os.environ):
+        if name.startswith("BROWSER_TOOLS_"):
+            monkeypatch.delenv(name)
+    monkeypatch.delenv("PLUGIN_DATA", raising=False)
+    monkeypatch.delenv("CLAUDE_PLUGIN_DATA", raising=False)
 
 
 @pytest.fixture

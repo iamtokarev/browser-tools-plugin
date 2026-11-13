@@ -2,7 +2,7 @@
 
 
 def main() -> None:
-    """Run the MCP server over stdio."""
-    from .server import create_server
+    """Run the `browser-tools` command: the MCP server over stdio, or `doctor`."""
+    from .cli import main as run
 
-    create_server().run()
+    run()

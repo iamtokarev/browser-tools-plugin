@@ -1,7 +1,7 @@
 """The MCP server: tool definitions on top of the facade seam."""
 
 import re
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -13,7 +13,7 @@ from mcp_types import CallToolResult, TextContent, ToolAnnotations
 
 from .facade import BrowserSession, sanitize_error_message, upstream_tool
 from .results import cap_run_result, cap_snapshot
-from .settings import Settings
+from .settings import SettingProblem, Settings, problems_message
 
 SERVER_NAME = "browser-tools"
 
@@ -120,12 +120,24 @@ class SchemaCheckedTool(Tool):
         return await super().run(arguments, context, convert_result)
 
 
-def create_server(settings: Settings | None = None, *, session: BrowserSession | None = None) -> MCPServer:
-    """Build the server. Nothing here touches the browser; it launches on first use."""
+def create_server(
+    settings: Settings | None = None,
+    *,
+    session: BrowserSession | None = None,
+    problems: Sequence[SettingProblem] = (),
+) -> MCPServer:
+    """Build the server. Nothing here touches the browser; it launches on first use.
+
+    With `problems`, the server still starts, but every tool call returns one tool error that
+    names each invalid setting and where it came from.
+    """
     session = session or BrowserSession(settings or Settings())
     config = session.settings
+    settings_error = text_result(problems_message(problems), is_error=True) if problems else None
 
     async def snapshot(includeIframes: bool = True) -> CallToolResult:
+        if settings_error is not None:
+            return settings_error
         try:
             text = await session.snapshot(include_iframes=includeIframes)
         except Exception as error:
@@ -133,6 +145,8 @@ def create_server(settings: Settings | None = None, *, session: BrowserSession |
         return text_result(cap_snapshot(text, config.result_ceiling))
 
     async def run(code: str | None = None, actions: list[dict[str, Any]] | None = None) -> CallToolResult:
+        if settings_error is not None:
+            return settings_error
         try:
             text = await session.run(code=code, actions=actions)
         except Exception as error:
