@@ -183,6 +183,26 @@ async def test_xhr_fetch_images_and_workers_to_a_refused_site_never_leave(
     assert other_site.hits == []
 
 
+async def test_a_shared_worker_cannot_reach_a_refused_site(
+    allow_a: Settings, site_a: str, site_b: str, other_site: OtherSite
+):
+    code = f"""
+    return await page.evaluate(() => new Promise(r => {{
+      const source = "onconnect = e => {{ const p = e.ports[0]; fetch(" + JSON.stringify({site_b + "/shared"!r}) + ")"
+        + ".then(() => p.postMessage('sent'), () => p.postMessage('refused')); }}";
+      const w = new SharedWorker(URL.createObjectURL(new Blob([source])));
+      w.port.onmessage = e => r(e.data);
+      setTimeout(() => r('no answer'), 5000);
+    }}));
+    """
+    async with Browser(allow_a) as browser:
+        await browser.goto(f"{site_a}/other.html")
+        result = await browser.run(code)
+    await settle()
+    assert result.startswith("refused"), result
+    assert other_site.hits == []
+
+
 async def test_a_page_match_cannot_reveal_a_masked_value_in_a_url(settings: Settings, fixture_url: str):
     async with Browser(settings) as browser:
         await browser.goto(f"{fixture_url}/other.html?token=FAKESECRETVALUE123&x=1")

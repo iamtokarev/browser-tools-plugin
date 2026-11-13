@@ -13,6 +13,9 @@ from typing import Any
 
 from .cdp import CdpConnection, CdpError
 
+# Workers that are targets of their own, not part of a tab. A dedicated worker is covered by its page.
+WORKER_TYPES = ("service_worker", "shared_worker")
+
 
 class TargetListener:
     """What a user of the attach path may implement. Every method has a harmless default."""
@@ -64,7 +67,13 @@ class Targets:
                 "autoAttach": True,
                 "waitForDebuggerOnStart": True,
                 "flatten": True,
-                "filter": [{"type": "page"}, {"type": "iframe"}, {"type": "service_worker"}, {"exclude": True}],
+                "filter": [
+                    {"type": "page"},
+                    {"type": "iframe"},
+                    {"type": "service_worker"},
+                    {"type": "shared_worker"},
+                    {"exclude": True},
+                ],
             },
         )
         targets = (await self._cdp.send("Target.getTargets"))["targetInfos"]
@@ -114,7 +123,7 @@ class Targets:
     def _on_attached(self, params: dict[str, Any], parent_session: str | None) -> Awaitable[None] | None:
         info = params["targetInfo"]
         waiting = params.get("waitingForDebugger", False)
-        if info["type"] not in ("page", "iframe", "service_worker"):
+        if info["type"] not in ("page", "iframe", *WORKER_TYPES):
             # The filter keeps these away; if one arrives, never leave it paused.
             return self._resume(params["sessionId"]) if waiting else None
         if info["targetId"] in self._claimed:
@@ -127,9 +136,7 @@ class Targets:
             await self._cdp.send("Runtime.runIfWaitingForDebugger", session=session)
 
     async def _setup(self, session: str, info: dict[str, Any], parent_session: str | None, *, waiting: bool) -> None:
-        if info["type"] == "service_worker":
-            target_id = info["targetId"]  # not a tab; it is its own owner
-        elif info["type"] == "page":
+        if info["type"] in WORKER_TYPES or info["type"] == "page":
             target_id = info["targetId"]
         else:
             target_id = self._owner.get(parent_session or "")
@@ -144,7 +151,7 @@ class Targets:
         commands: list[Awaitable[Any]] = []
         for listener in self._listeners:
             commands.extend(listener.on_attach(session, info, target_id))
-        if info["type"] != "service_worker":
+        if info["type"] not in WORKER_TYPES:
             commands.append(
                 self._cdp.send(
                     "Target.setAutoAttach",
