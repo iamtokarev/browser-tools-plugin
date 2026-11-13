@@ -364,7 +364,7 @@ async def test_enforcement_stays_on_when_the_debugging_group_is_off(
     async with Browser(core_only) as browser:
         assert not browser.session.capturing
         names = {tool.name for tool in (await browser.client.list_tools()).tools}
-        assert names == {"snapshot", "run"}
+        assert names == {"snapshot", "run", "screenshot"}
         await browser.goto(f"{site_a}/other.html")
         result = await browser.goto(f"{site_b}/x")
         await browser.goto(f"{site_a}/other.html")

@@ -8,6 +8,9 @@ Browser tools that any agent can use over MCP, packaged with skills as an agent 
 A trimmed text rendering of the current page's accessibility tree in which each interactive element carries an element ID.
 _Avoid_: DOM dump, page source, a11y tree
 
+**Screenshot ladder**:
+The list of captures that screenshot tries in order, until one is at most 1 MB of base64 and 2,000 px on its longest side. It starts with the requested options, then a viewport JPEG at lower quality, and it scales a too-wide viewport down.
+
 **Element ID**:
 The short identifier a snapshot assigns to an interactive element, valid only until the next snapshot or navigation.
 _Avoid_: ref, selector, handle

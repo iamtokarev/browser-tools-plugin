@@ -5,6 +5,9 @@ package, or replacing the middleware with direct SDK calls, changes this file on
 """
 
 import asyncio
+import base64
+import contextlib
+import math
 import re
 import sys
 from collections.abc import Mapping, Sequence
@@ -20,9 +23,20 @@ from stagehand_middleware.facade.tools import StagehandFacadeTools, sanitize_err
 
 from . import console_text, network_text
 from .capture import Capture
-from .cdp import CdpConnection
+from .cdp import CdpConnection, CdpError
 from .limits import SiteEnforcer, refusal_notice
 from .results import NO_VALUE, page_code_text
+from .screenshots import (
+    MAX_SIDE_PX,
+    Attempt,
+    ImageType,
+    Screenshot,
+    ScreenshotTooLargeError,
+    fits_bytes,
+    fits_side,
+    image_size,
+    ladder,
+)
 from .settings import Settings
 from .sites import SiteLimits
 from .targets import Targets
@@ -123,6 +137,88 @@ class BrowserSession:
             header = await asyncio.wait_for(self._header(), self._settings.capture_timeout)
             await self._raise_if_lost()
             return self._with_refusals(f"{header}\n{tree}")
+
+    async def screenshot(
+        self, *, full_page: bool = False, type: ImageType = "jpeg", quality: float | None = None
+    ) -> Screenshot:
+        """The active page as an image that fits the client limits, after the fallback ladder.
+
+        Raises ScreenshotTooLargeError when no rung fits. A page that the site limits blocked
+        shows its notice page, and that is a page like any other.
+        """
+        async with self._lock:
+            await self._raise_if_lost()
+            await self._ensure_launched()
+            page = await self._active_page()
+            try:
+                shot = await asyncio.wait_for(
+                    self._climb(page, full_page=full_page, type=type, quality=quality),
+                    self._settings.capture_timeout,
+                )
+            except TimeoutError:
+                raise RuntimeError(
+                    f"page.screenshot received no response within {round(self._settings.capture_timeout * 1000)}ms. "
+                    "Call snapshot to see the page, then try again."
+                ) from None
+            await self._raise_if_lost()
+            return shot
+
+    async def _climb(self, page: Any, *, full_page: bool, type: ImageType, quality: float | None) -> Screenshot:
+        """Try each rung of the ladder until one fits.
+
+        A rung is first captured at the pixel size of the browser. Sometimes that image is too wide,
+        for example on a 2x screen. A lower quality does not help then. So the same rung is
+        captured again, scaled down to the side limit, and the next rungs stay scaled.
+        A full page that is too large is not scaled. The next rung is the viewport,
+        because a scaled page of several screens is too small to read.
+        """
+        scaled = False
+        for attempt in ladder(full_page=full_page, type=type, quality=quality):
+            shot = await (self._shoot_scaled(page, attempt) if scaled else self._shoot(page, attempt))
+            if not scaled and not attempt.full_page and not fits_side(shot.width, shot.height):
+                shot = await self._shoot_scaled(page, attempt)
+                scaled = True
+            if fits_side(shot.width, shot.height) and fits_bytes(shot.data):
+                return shot
+        raise ScreenshotTooLargeError
+
+    @staticmethod
+    async def _shoot(page: Any, attempt: Attempt) -> Screenshot:
+        data = await page.screenshot(type=attempt.type, full_page=attempt.full_page, quality=attempt.quality)
+        width, height = image_size(data)
+        return Screenshot(data, attempt.type, attempt.quality, attempt.full_page, width, height, scaled=False)
+
+    async def _shoot_scaled(self, page: Any, attempt: Attempt) -> Screenshot:
+        """The attempt again over the host connection, with a clip scale that keeps it to the side limit.
+
+        The SDK's screenshot has no clip scale, and its own `scale` option does not shrink an image.
+        The page ID of the SDK is the target ID of Chrome.
+        """
+        assert self._connection is not None
+        connection = self._connection
+        attached = await connection.send("Target.attachToTarget", {"targetId": page.page_id, "flatten": True})
+        session = attached["sessionId"]
+        try:
+            metrics = await connection.send("Page.getLayoutMetrics", session=session)
+            size = metrics["cssContentSize"] if attempt.full_page else metrics["cssVisualViewport"]
+            width = size["width"] if attempt.full_page else size["clientWidth"]
+            height = size["height"] if attempt.full_page else size["clientHeight"]
+            # Rounded down, so that rounding the pixels up cannot pass the limit.
+            scale = min(1.0, math.floor(MAX_SIDE_PX / max(width, height, 1) * 1000) / 1000)
+            params: dict[str, Any] = {
+                "format": attempt.type,
+                "clip": {"x": 0, "y": 0, "width": width, "height": height, "scale": scale},
+                "captureBeyondViewport": attempt.full_page,
+            }
+            if attempt.quality is not None:
+                params["quality"] = attempt.quality
+            result = await connection.send("Page.captureScreenshot", params, session=session)
+        finally:
+            with contextlib.suppress(CdpError):
+                await connection.send("Target.detachFromTarget", {"sessionId": session})
+        data = base64.b64decode(result["data"])
+        pixels = image_size(data)
+        return Screenshot(data, attempt.type, attempt.quality, attempt.full_page, *pixels, scaled=True)
 
     async def run(self, *, code: str | None = None, actions: Sequence[Mapping[str, Any]] | None = None) -> str:
         """Run page code or a batch of actions on the active page; pass exactly one.
@@ -303,14 +399,19 @@ class BrowserSession:
         page = await self._stagehand.browser.context.active_page()
         return await page.url() if page is not None else "about:blank"
 
-    async def _header(self) -> str:
-        """`Page: <title> | <url>` for the active page, read just after the capture."""
+    async def _active_page(self) -> Any:
+        """The active page, or the newest one when none is active."""
         assert self._stagehand is not None
         context = self._stagehand.browser.context
         page = await context.active_page()
         if page is None:
             pages = await context.pages()
             if not pages:
-                raise RuntimeError("The browser has no open page; call snapshot again.")
+                raise RuntimeError("The browser has no open page; open one with run, then try again.")
             page = pages[-1]
+        return page
+
+    async def _header(self) -> str:
+        """`Page: <title> | <url>` for the active page, read just after the capture."""
+        page = await self._active_page()
         return f"Page: {await page.title()} | {await page.url()}"

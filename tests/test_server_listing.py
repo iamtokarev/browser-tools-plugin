@@ -4,6 +4,7 @@ import pytest
 from mcp import Client
 from stagehand import local_browser
 
+from browser_tools_plugin.facade import upstream_tool
 from browser_tools_plugin.server import SERVER_NAME, create_server
 from browser_tools_plugin.settings import Settings
 
@@ -41,7 +42,7 @@ def launch_forbidden(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 async def test_lists_tools_without_launching_the_browser(launch_forbidden: list[str], tmp_path):
     async with Client(create_server(Settings(data_dir=tmp_path))) as client:
         result = await client.list_tools()
-    assert [tool.name for tool in result.tools] == ["snapshot", "run", "console", "network"]
+    assert [tool.name for tool in result.tools] == ["snapshot", "run", "screenshot", "console", "network"]
     assert launch_forbidden == []
     assert list(tmp_path.iterdir()) == []  # no profile directory created either
 
@@ -53,6 +54,20 @@ async def test_snapshot_keeps_upstreams_argument_schema_and_is_read_only(launch_
     assert tool.annotations is not None
     assert tool.annotations.read_only_hint is True
     assert tool.output_schema is None
+
+
+async def test_screenshot_keeps_upstreams_argument_schema_and_is_read_only(launch_forbidden: list[str], tmp_path):
+    async with Client(create_server(Settings(data_dir=tmp_path))) as client:
+        tool = next(t for t in (await client.list_tools()).tools if t.name == "screenshot")
+    assert tool.input_schema == upstream_tool("screenshot")["inputSchema"]
+    assert tool.annotations is not None
+    assert tool.annotations.read_only_hint is True
+    assert tool.output_schema is None
+    assert tool.description is not None
+    assert "only when layout or images matter" in tool.description
+    assert "JPEG at quality 60" in tool.description
+    assert str(tmp_path / "artifacts") in tool.description  # never a path under the working directory
+    assert "size-constrained" not in tool.description
 
 
 async def test_description_is_our_own_text_not_upstreams(launch_forbidden: list[str], tmp_path):
@@ -109,7 +124,7 @@ async def test_network_is_read_only_and_takes_the_documented_arguments(launch_fo
 
 async def test_removing_debugging_from_groups_hides_console_and_network(launch_forbidden: list[str], tmp_path):
     async with Client(create_server(Settings(data_dir=tmp_path, groups=("core",)))) as client:
-        assert [t.name for t in (await client.list_tools()).tools] == ["snapshot", "run"]
+        assert [t.name for t in (await client.list_tools()).tools] == ["snapshot", "run", "screenshot"]
         for name in ("console", "network"):
             assert (await client.call_tool(name, {})).is_error
 
