@@ -41,14 +41,14 @@ def launch_forbidden(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 async def test_lists_tools_without_launching_the_browser(launch_forbidden: list[str], tmp_path):
     async with Client(create_server(Settings(data_dir=tmp_path))) as client:
         result = await client.list_tools()
-    assert [tool.name for tool in result.tools] == ["snapshot"]
+    assert [tool.name for tool in result.tools] == ["snapshot", "run"]
     assert launch_forbidden == []
     assert list(tmp_path.iterdir()) == []  # no profile directory created either
 
 
 async def test_snapshot_keeps_upstreams_argument_schema_and_is_read_only(launch_forbidden: list[str], tmp_path):
     async with Client(create_server(Settings(data_dir=tmp_path))) as client:
-        (tool,) = (await client.list_tools()).tools
+        tool = next(t for t in (await client.list_tools()).tools if t.name == "snapshot")
     assert tool.input_schema == UPSTREAM_SNAPSHOT_SCHEMA
     assert tool.annotations is not None
     assert tool.annotations.read_only_hint is True
@@ -57,7 +57,7 @@ async def test_snapshot_keeps_upstreams_argument_schema_and_is_read_only(launch_
 
 async def test_description_is_our_own_text_not_upstreams(launch_forbidden: list[str], tmp_path):
     async with Client(create_server(Settings(data_dir=tmp_path))) as client:
-        (tool,) = (await client.list_tools()).tools
+        tool = next(t for t in (await client.list_tools()).tools if t.name == "snapshot")
     assert tool.description is not None
     assert "Page: <title> | <url>" in tool.description
     assert "Stagehand" not in tool.description

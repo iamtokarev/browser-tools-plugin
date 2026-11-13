@@ -15,10 +15,10 @@ from tests.conftest import find_chrome, needs_chrome
 pytestmark = needs_chrome
 
 
-async def goto(session: BrowserSession, url: str) -> None:
-    """Navigate the active page. The run tool is a later ticket, so reach in directly."""
-    assert session._tools is not None
-    await session._tools.run(code=f"await page.goto({url!r}); return 1;")
+async def goto(client: Client, url: str) -> None:
+    """Navigate the active page through the public run tool."""
+    result = await client.call_tool("run", {"code": f"await page.goto({url!r}); return 1;"})
+    assert not result.is_error, result.content
 
 
 @pytest.fixture
@@ -43,7 +43,7 @@ async def test_snapshot_returns_header_and_tree_with_element_ids(session: Browse
         assert not session.launched  # connecting and listing did not launch Chrome
         await snapshot_text(client)  # first call launches the browser, on about:blank
         assert session.launched
-        await goto(session, f"{fixture_url}/page.html")
+        await goto(client, f"{fixture_url}/page.html")
         text = await snapshot_text(client)
 
     header, _, tree = text.partition("\n")
@@ -56,7 +56,7 @@ async def test_snapshot_returns_header_and_tree_with_element_ids(session: Browse
 async def test_include_iframes_argument_is_honoured(session: BrowserSession, fixture_url: str):
     async with Client(create_server(session=session)) as client:
         await snapshot_text(client)
-        await goto(session, f"{fixture_url}/page.html")
+        await goto(client, f"{fixture_url}/page.html")
         with_frames = await snapshot_text(client, includeIframes=True)
         without_frames = await snapshot_text(client, includeIframes=False)
     assert "Inside frame" in with_frames

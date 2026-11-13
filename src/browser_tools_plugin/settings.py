@@ -32,7 +32,9 @@ class Settings:
     profile: str = "default"
     chrome_path: str | None = None
     data_dir: Path = field(default_factory=default_data_dir)
+    run_timeout: float = 45.0
     capture_timeout: float = 30.0
+    result_ceiling: int = 60_000
     quiet_wait: bool = True
 
     @property

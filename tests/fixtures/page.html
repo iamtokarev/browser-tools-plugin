@@ -4,7 +4,9 @@
 <body>
   <h1>Fixture heading</h1>
   <label>Name <input id="name" type="text" aria-label="Name"></label>
-  <button id="go" type="button">Greet</button>
+  <button id="go" type="button"
+    onclick="document.getElementById('out').textContent = 'Hello ' + document.getElementById('name').value">Greet</button>
+  <p id="out"></p>
   <a href="/other.html">Other page</a>
   <iframe srcdoc="<button>Inside frame</button>" title="frame"></iframe>
 </body>
