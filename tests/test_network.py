@@ -243,7 +243,25 @@ def test_a_json_body_without_secrets_is_returned_unchanged_whatever_its_content_
 
 def test_a_cut_json_body_still_has_its_secret_fields_masked():
     masked = mask_request_body('{"a":"x","password":"FAKE-PASSWORD-9","b":["long', "application/json")
-    assert masked == '{"a":"x","password":"[redacted, 15 chars]","b":["long'
+    assert masked == '{"a":"x","password":"[redacted, 17 chars]","b":["long'
+
+
+def test_a_malformed_json_body_hides_a_whole_nested_secret_value():
+    # A trailing comma makes the text invalid, so the text scanner works, not the parser.
+    obj = mask_request_body('{"token":{"value":"FAKEABC","n":[1,2]},"ok":"yes",}', "application/json")
+    assert "FAKEABC" not in obj and '"ok":"yes"' in obj
+    assert obj.startswith('{"token":"[redacted, ')
+    arr = mask_request_body('{"secret":["FAKEA","FAKEB"],"ok":1,}', "application/json")
+    assert "FAKEA" not in arr and "FAKEB" not in arr and '"ok":1' in arr
+    brackets = mask_request_body('{"auth":{"s":"a}b\\"]c"},"ok":1,}', "application/json")
+    assert "a}b" not in brackets and '"ok":1' in brackets
+
+
+def test_a_json_body_cut_inside_a_secret_value_is_masked_to_its_end():
+    for cut in ('{"a":1,"token":{"value":"FAKE-ABC', '{"a":1,"secret":["FAKE-ABC","x', '{"a":1,"password":"FAKE-ABC'):
+        masked = mask_request_body(cut, "application/json")
+        assert "FAKE-ABC" not in masked and masked.startswith('{"a":1,"')
+        assert masked.endswith(' chars]"')
 
 
 def test_a_body_that_is_not_form_or_json_is_not_changed():

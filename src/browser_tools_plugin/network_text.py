@@ -155,9 +155,45 @@ def _mask_json_value(value: object) -> tuple[object, bool]:
     return value, False
 
 
-# A `"name": value` pair, for JSON that does not parse because it was cut. The value is a
-# string, which may be cut too, or the bare text up to the next separator.
-_JSON_FIELD = re.compile(r'("(?:[^"\\]|\\.)*"\s*:\s*)("(?:[^"\\]|\\.)*"?|[^\s,}\]]+)')
+# A `"name":` key, for JSON that does not parse because it was cut or is malformed.
+_JSON_KEY = re.compile(r'"((?:[^"\\]|\\.)*)"\s*:\s*')
+
+
+def _value_end(text: str, start: int) -> int:
+    """Where the JSON value at `start` ends: after the matching close bracket or quote, or at the
+    end of the text when there is none (a cut value is masked to its end)."""
+    first = text[start : start + 1]
+    if first == '"':
+        i = start + 1
+        while i < len(text):
+            if text[i] == "\\":
+                i += 2
+            elif text[i] == '"':
+                return i + 1
+            else:
+                i += 1
+        return len(text)
+    if first in ("{", "["):
+        depth, i, in_string = 0, start, False
+        while i < len(text):
+            char = text[i]
+            if in_string:
+                if char == "\\":
+                    i += 1
+                elif char == '"':
+                    in_string = False
+            elif char == '"':
+                in_string = True
+            elif char in "{[":
+                depth += 1
+            elif char in "}]":
+                depth -= 1
+                if depth == 0:
+                    return i + 1
+            i += 1
+        return len(text)
+    match = re.compile(r"[^\s,}\]]*").match(text, start)
+    return match.end() if match else start
 
 
 def _mask_json_text(text: str) -> str:
@@ -168,19 +204,24 @@ def _mask_json_text(text: str) -> str:
     else:
         masked, changed = _mask_json_value(parsed)
         return json.dumps(masked, separators=(",", ":"), ensure_ascii=False) if changed else text
-
-    def replace(match: re.Match[str]) -> str:
-        head, value = match.groups()
+    # Fail closed: a secret key hides its whole value, up to the matching bracket or the end.
+    out: list[str] = []
+    position = 0
+    while (match := _JSON_KEY.search(text, position)) is not None:
         try:
-            name = json.loads(head[: head.rindex('"') + 1])
+            name = json.loads(f'"{match.group(1)}"')
         except ValueError:
-            return match.group(0)
+            name = match.group(1)
         if not is_secret_name(name):
-            return match.group(0)
-        size = len(value.strip('"')) if value.startswith('"') else len(value)
-        return f'{head}"{_masked(size)}"'
-
-    return _JSON_FIELD.sub(replace, text)
+            out.append(text[position : match.end()])
+            position = match.end()
+            continue
+        end = _value_end(text, match.end())
+        out.append(text[position : match.end()])
+        out.append(f'"{_masked(end - match.end())}"')
+        position = end
+    out.append(text[position:])
+    return "".join(out)
 
 
 def _mask_form_text(text: str) -> str:
