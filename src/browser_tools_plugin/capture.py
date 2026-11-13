@@ -31,6 +31,7 @@ from .network_text import (
     REQUEST_BUFFER_LIMIT,
     BodyCache,
     NetworkReport,
+    Redactor,
     Request,
     read_matching,
 )
@@ -104,11 +105,11 @@ class PageBuffer:
             removed.append(old)
         return removed
 
-    def read_requests(self, *, all: bool, failed: bool, url: str | None, types: str) -> NetworkReport:
+    def read_requests(self, *, all: bool, failed: bool, url: str | None, types: str, redact: Redactor) -> NetworkReport:
         """Requests that fit, newest first and at most ENTRY_LIMIT. Requests shown count as read.
         Without `all`, only unread requests are chosen."""
         shown, matching, hidden, hidden_failed = read_matching(
-            self._requests, all=all, failed=failed, url=url, types=types
+            self._requests, all=all, failed=failed, url=url, types=types, redact=redact
         )
         return NetworkReport(
             page=self.ref,
@@ -243,11 +244,19 @@ class Capture:
         return report
 
     async def read_network(
-        self, query: str | None, active_id: str | None, *, all: bool, failed: bool, url: str | None, types: str
+        self,
+        query: str | None,
+        active_id: str | None,
+        *,
+        all: bool,
+        failed: bool,
+        url: str | None,
+        types: str,
+        redact: Redactor,
     ) -> NetworkReport:
         await self.refresh()
         buffer = self.find(query, active_id)
-        report = buffer.read_requests(all=all, failed=failed, url=url, types=types)
+        report = buffer.read_requests(all=all, failed=failed, url=url, types=types, redact=redact)
         report.others = [p.ref for p in self._pages.values() if p is not buffer]
         return report
 

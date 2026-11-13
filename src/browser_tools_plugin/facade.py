@@ -152,7 +152,9 @@ class BrowserSession:
                 request_page, request, late_body = await self._capture.request(id)
                 return network_text.render_detail(request, request_page, sanitize_error_message, lazy_body=late_body)
             active = await self._active_page_id() if page is None else None
-            report = await self._capture.read_network(page, active, all=all, failed=failed, url=url, types=types)
+            report = await self._capture.read_network(
+                page, active, all=all, failed=failed, url=url, types=types, redact=sanitize_error_message
+            )
             return network_text.render_report(report, sanitize_error_message)
 
     def _nothing_captured(self, tool: str, verb: str) -> str:

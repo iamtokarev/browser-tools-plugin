@@ -19,6 +19,7 @@ from browser_tools_plugin.network_text import (
     BodyNotHeldError,
     Request,
     mask_header,
+    mask_request_body,
     render_detail,
     render_report,
     request_line,
@@ -85,7 +86,7 @@ def test_the_buffer_keeps_the_last_1000_requests_and_counts_the_dropped():
     assert len(buffer.requests) == 1000
     assert [r.id for r in removed] == [f"r{i}" for i in range(1, 201)]
     assert all(r.released for r in removed)
-    report = buffer.read_requests(all=True, failed=False, url=None, types="default")
+    report = buffer.read_requests(all=True, failed=False, url=None, types="default", redact=plain)
     assert report.dropped == 200
     assert report.matching == 1000
     assert report.shown[0].id == "r1200"  # newest first
@@ -99,7 +100,10 @@ def test_new_requests_are_returned_once_and_all_returns_everything():
     buffer = PageBuffer("t")
     for i in range(1, 4):
         buffer.add_request(done(i))
-    read = lambda **kw: buffer.read_requests(all=kw.get("all", False), failed=False, url=None, types="default")  # noqa: E731
+
+    def read(**kw: bool):
+        return buffer.read_requests(all=kw.get("all", False), failed=False, url=None, types="default", redact=plain)
+
     assert [r.id for r in read().shown] == ["r3", "r2", "r1"]
     again = read()
     assert again.shown == []
@@ -113,10 +117,10 @@ def test_a_second_call_returns_the_older_requests_that_did_not_fit():
     buffer = PageBuffer("t")
     for i in range(1, 131):
         buffer.add_request(done(i))
-    first = buffer.read_requests(all=False, failed=False, url=None, types="default")
+    first = buffer.read_requests(all=False, failed=False, url=None, types="default", redact=plain)
     assert (len(first.shown), first.matching) == (100, 130)
     assert "30 older new requests are not shown. Call network again to read them." in render_report(first, plain)
-    second = buffer.read_requests(all=False, failed=False, url=None, types="default")
+    second = buffer.read_requests(all=False, failed=False, url=None, types="default", redact=plain)
     assert [r.id for r in second.shown][:1] == ["r30"]
     assert len(second.shown) == 30
 
@@ -128,9 +132,9 @@ def test_failed_means_status_400_and_up_or_no_answer_and_a_hidden_request_stays_
     buffer.add_request(done(3, 500))
     buffer.add_request(make(4, failure="net::ERR_FAILED", finished=True))
     buffer.add_request(done(5, 302))
-    failed = buffer.read_requests(all=False, failed=True, url=None, types="default")
+    failed = buffer.read_requests(all=False, failed=True, url=None, types="default", redact=plain)
     assert [r.id for r in failed.shown] == ["r4", "r3", "r2"]
-    rest = buffer.read_requests(all=False, failed=False, url=None, types="default")
+    rest = buffer.read_requests(all=False, failed=False, url=None, types="default", redact=plain)
     assert [r.id for r in rest.shown] == ["r5", "r1"]  # the failed ones were read already
 
 
@@ -138,7 +142,7 @@ def test_url_is_a_case_insensitive_substring():
     buffer = PageBuffer("t")
     buffer.add_request(done(1, url="http://h/Api/Users"))
     buffer.add_request(done(2, url="http://h/other"))
-    report = buffer.read_requests(all=True, failed=False, url="api/users", types="default")
+    report = buffer.read_requests(all=True, failed=False, url="api/users", types="default", redact=plain)
     assert [r.id for r in report.shown] == ["r1"]
     assert "with a URL that contains 'api/users'" in render_report(report, plain)
 
@@ -149,12 +153,12 @@ def test_images_fonts_media_and_stylesheets_are_hidden_unless_types_is_all():
     for number, kind in enumerate(("Image", "Font", "Media", "Stylesheet"), start=2):
         buffer.add_request(done(number, resource_type=kind))
     buffer.add_request(done(6, 404, resource_type="Image"))
-    default = buffer.read_requests(all=True, failed=False, url=None, types="default")
+    default = buffer.read_requests(all=True, failed=False, url=None, types="default", redact=plain)
     assert [r.id for r in default.shown] == ["r1"]
     assert (default.hidden, default.hidden_failed) == (5, 1)
     text = render_report(default, plain)
     assert '5 image, font, media or stylesheet requests are hidden, 1 of them failed. Pass types: "all"' in text
-    everything = buffer.read_requests(all=True, failed=False, url=None, types="all")
+    everything = buffer.read_requests(all=True, failed=False, url=None, types="all", redact=plain)
     assert len(everything.shown) == 6
     assert everything.hidden == 0
 
@@ -167,6 +171,122 @@ def test_secret_header_values_show_only_their_length():
         "Set-Cookie: [redacted, 4 chars]",
     ]
     assert mask_header("Accept", "*/*", plain) == ["Accept: */*"]
+
+
+def test_a_header_whose_name_holds_a_secret_word_is_masked():
+    for name in (
+        "X-Auth-Token",
+        "x-api-key",
+        "X-Amz-Security-Token",
+        "X-Client-Secret",
+        "X-Session-Id",
+        "X-CSRF-Token",
+        "x-xsrf-header",
+        "X-Signature",
+        "X-Password-Hint",
+        "X-Credentials",
+        "WWW-Authenticate",
+        "Sec-WebSocket-Key",  # a false positive that the spec accepts: the word list is a substring match
+    ):
+        assert mask_header(name, "FAKE-VALUE", plain) == [f"{name}: [redacted, 10 chars]"], name
+
+
+def test_common_harmless_headers_are_not_masked():
+    for name in (
+        "Keep-Alive",
+        "Cache-Control",
+        "Content-Type",
+        "Content-Length",
+        "Accept-Encoding",
+        "Sec-WebSocket-Accept",
+        "Sec-Fetch-Site",
+        "Strict-Transport-Security",
+        "Content-Security-Policy",
+        "Access-Control-Allow-Origin",
+        "Access-Control-Allow-Headers",
+        "X-Frame-Options",
+        "ETag",
+        "User-Agent",
+        "Referer",
+    ):
+        assert mask_header(name, "plain", plain) == [f"{name}: plain"], name
+
+
+def test_secret_fields_of_a_form_body_are_masked_and_the_rest_is_kept():
+    body = "user=ann&password=hunter2-FAKE&api_key=FAKE%20KEY&note=a+b&Session-Id=abc&flag"
+    assert mask_request_body(body, "application/x-www-form-urlencoded; charset=UTF-8") == (
+        "user=ann&password=[redacted, 12 chars]&api_key=[redacted, 8 chars]&note=a+b"
+        "&Session-Id=[redacted, 3 chars]&flag"
+    )
+    assert mask_request_body("a=1&b=2", "application/x-www-form-urlencoded") == "a=1&b=2"
+
+
+def test_secret_fields_of_a_json_body_are_masked_at_every_depth():
+    body = (
+        '{"user":"ann","auth":{"user":"a","pw":"b"},"list":[{"Access_Token":"FAKE-TOKEN-0123"}],'
+        '"csrf":12345,"n":1,"keyboard":"no"}'
+    )
+    masked = mask_request_body(body, "application/json")
+    assert masked == (
+        '{"user":"ann","auth":"[redacted, 21 chars]","list":[{"Access_Token":"[redacted, 15 chars]"}],'
+        '"csrf":"[redacted, 5 chars]","n":1,"keyboard":"[redacted, 2 chars]"}'
+    )
+    assert "FAKE-TOKEN" not in masked
+
+
+def test_a_json_body_without_secrets_is_returned_unchanged_whatever_its_content_type():
+    pretty = '{\n  "a": 1\n}'
+    assert mask_request_body(pretty, "application/json") == pretty
+    assert mask_request_body('{"token":"FAKE12345"}', "text/plain;charset=UTF-8") == '{"token":"[redacted, 9 chars]"}'
+    assert mask_request_body('{"token":"FAKE12345"}', None) == '{"token":"[redacted, 9 chars]"}'
+
+
+def test_a_cut_json_body_still_has_its_secret_fields_masked():
+    masked = mask_request_body('{"a":"x","password":"FAKE-PASSWORD-9","b":["long', "application/json")
+    assert masked == '{"a":"x","password":"[redacted, 15 chars]","b":["long'
+
+
+def test_a_body_that_is_not_form_or_json_is_not_changed():
+    assert mask_request_body("token=abc", "text/plain") == "token=abc"
+    assert mask_request_body("--x\r\ncontent-disposition: form-data; name=token", "multipart/form-data") == (
+        "--x\r\ncontent-disposition: form-data; name=token"
+    )
+
+
+def test_the_detail_masks_secret_headers_and_request_fields_but_not_response_fields():
+    request = done(
+        1,
+        method="POST",
+        request_headers={"Content-Type": "application/json", "X-Api-Key": "FAKEAPIKEY", "Accept": "*/*"},
+        response_headers={"X-Session-Id": "FAKESESSIONID", "Vary": "Origin"},
+        post_data='{"password":"FAKEPASS","name":"ann"}',
+    )
+    request.body = '{"password":"RESPONSEPASS"}'
+    text = render_detail(request, PAGE, plain)
+    assert "X-Api-Key: [redacted, 10 chars]" in text
+    assert "X-Session-Id: [redacted, 13 chars]" in text
+    assert "Vary: Origin" in text
+    assert 'Request body (36 bytes):\n{"password":"[redacted, 8 chars]","name":"ann"}' in text
+    assert "FAKEPASS" not in text
+    assert 'Response body (27 bytes):\n{"password":"RESPONSEPASS"}' in text  # the spec masks request bodies only
+
+
+def test_the_url_filter_matches_the_masked_url_so_it_cannot_reveal_a_masked_value():
+    buffer = PageBuffer("t")
+    buffer.add_request(done(1, url="http://h/api?token=FAKESECRET123&page=2"))
+    buffer.add_request(done(2, url="http://h/other"))
+
+    def find(needle: str) -> list[str]:
+        report = buffer.read_requests(
+            all=True, failed=False, url=needle, types="default", redact=sanitize_error_message
+        )
+        return [r.id for r in report.shown]
+
+    assert find("page=2") == ["r1"]
+    assert find("token=[redacted]") == ["r1"]
+    assert find("FAKESECRET") == []
+    assert find("token=F") == []
+    assert find("fakesecret123") == []
 
 
 # --- The body cache and the detail, without a browser --------------------------------------
@@ -229,7 +349,7 @@ def test_headers_and_bodies_are_masked_in_the_detail():
     assert "Accept: */*" in text
     assert "FAKETOKEN" not in text
     assert "FAKESESSION" not in text
-    assert 'Request body (29 bytes):\n{"key":"sk-FAKEKE[redacted]"}' in text
+    assert 'Request body (29 bytes):\n{"key":"[redacted, 19 chars]"}' in text
     assert "Bearer [redacted]" in text
     assert "FAKEBEARER" not in text
 
@@ -601,3 +721,18 @@ async def test_a_busy_console_page_is_cut_by_the_result_ceiling(settings: Settin
         await session.close()
     assert len(text.partition("\n\n[Cut:")[0]) <= 1500
     assert "Call console again with a higher level or with page" in text
+
+
+@needs_chrome
+async def test_a_url_filter_on_a_masked_value_matches_nothing(session: BrowserSession, fixture_url: str):
+    async with Client(create_server(session=session)) as client:
+        await goto(client, f"{fixture_url}/other.html")
+        await call(
+            client, "run", code="await page.evaluate(() => fetch('/api/items?token=FAKESECRETVALUE123')); return 1;"
+        )
+        await network_until(client, "token=[redacted]", all=True)
+        by_value = await call(client, "network", all=True, url="FAKESECRET")
+        by_mask = await call(client, "network", all=True, url="token=[redacted]")
+    assert lines_of(by_value) == []
+    assert len(lines_of(by_mask)) == 1
+    assert "FAKESECRET" not in by_mask

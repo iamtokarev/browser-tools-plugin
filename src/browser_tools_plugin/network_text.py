@@ -1,8 +1,11 @@
 """The `network` tool's data and text: requests, the body cache, and the list and detail output."""
 
 import collections
+import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from urllib.parse import unquote_plus
 
 from .console_text import BUFFER_LIMIT, ENTRY_LIMIT, PageRef, cut, one_line, other_pages_line, page_label
 
@@ -13,6 +16,9 @@ BODY_SHOW_LIMIT = 10 * 1024  # largest body in a result, in bytes
 
 # Header values that are secrets. The names are compared in lower case.
 SECRET_HEADERS = frozenset({"authorization", "cookie", "set-cookie", "proxy-authorization"})
+# A header or a body field whose name holds one of these words is a secret, in any case.
+# It is a substring match, so a few harmless names match too, such as `Sec-WebSocket-Key`.
+SECRET_WORDS = ("auth", "token", "key", "secret", "session", "csrf", "xsrf", "signature", "password", "credential")
 # Request types that the list hides unless `types` is `all`.
 HIDDEN_TYPES = frozenset({"Image", "Font", "Media", "Stylesheet"})
 
@@ -111,12 +117,92 @@ class BodyCache:
         request.body = None
 
 
+def is_secret_name(name: str) -> bool:
+    """Whether a header or field of this name holds a secret."""
+    lower = name.lower()
+    return lower in SECRET_HEADERS or any(word in lower for word in SECRET_WORDS)
+
+
+def _masked(size: int) -> str:
+    return f"[redacted, {size} chars]"
+
+
 def mask_header(name: str, value: str, redact: Redactor) -> list[str]:
     """The display lines of one header. A secret shows only its length; one line per value."""
     values = value.split("\n")
-    if name.lower() in SECRET_HEADERS:
-        return [f"{name}: [redacted, {len(v)} chars]" for v in values]
+    if is_secret_name(name):
+        return [f"{name}: {_masked(len(v))}" for v in values]
     return [f"{name}: {cut(one_line(redact(v)))}" for v in values]
+
+
+def _mask_json_value(value: object) -> tuple[object, bool]:
+    """The value with every secret field masked, and whether anything changed."""
+    if isinstance(value, dict):
+        changed = False
+        result: dict[str, object] = {}
+        for key, item in value.items():
+            if is_secret_name(key):
+                size = len(item) if isinstance(item, str) else len(json.dumps(item, separators=(",", ":")))
+                result[key] = _masked(size)
+                changed = True
+            else:
+                result[key], inner = _mask_json_value(item)
+                changed = changed or inner
+        return result, changed
+    if isinstance(value, list):
+        items = [_mask_json_value(item) for item in value]
+        return [item for item, _ in items], any(inner for _, inner in items)
+    return value, False
+
+
+# A `"name": value` pair, for JSON that does not parse because it was cut. The value is a
+# string, which may be cut too, or the bare text up to the next separator.
+_JSON_FIELD = re.compile(r'("(?:[^"\\]|\\.)*"\s*:\s*)("(?:[^"\\]|\\.)*"?|[^\s,}\]]+)')
+
+
+def _mask_json_text(text: str) -> str:
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        pass
+    else:
+        masked, changed = _mask_json_value(parsed)
+        return json.dumps(masked, separators=(",", ":"), ensure_ascii=False) if changed else text
+
+    def replace(match: re.Match[str]) -> str:
+        head, value = match.groups()
+        try:
+            name = json.loads(head[: head.rindex('"') + 1])
+        except ValueError:
+            return match.group(0)
+        if not is_secret_name(name):
+            return match.group(0)
+        size = len(value.strip('"')) if value.startswith('"') else len(value)
+        return f'{head}"{_masked(size)}"'
+
+    return _JSON_FIELD.sub(replace, text)
+
+
+def _mask_form_text(text: str) -> str:
+    parts = []
+    for part in text.split("&"):
+        name, equals, value = part.partition("=")
+        if equals and is_secret_name(unquote_plus(name)):
+            part = f"{name}={_masked(len(unquote_plus(value)))}"
+        parts.append(part)
+    return "&".join(parts)
+
+
+def mask_request_body(text: str, content_type: str | None) -> str:
+    """A request body with the values of secret fields masked. Only form-encoded and JSON bodies
+    have fields. A body that looks like JSON counts as JSON whatever its content type says,
+    because `fetch` sends a string body as text/plain."""
+    mime = (content_type or "").split(";", 1)[0].strip().lower()
+    if mime == "application/x-www-form-urlencoded":
+        return _mask_form_text(text)
+    if mime == "application/json" or mime.endswith("+json") or text.lstrip()[:1] in ("{", "["):
+        return _mask_json_text(text)
+    return text
 
 
 def _status_text(request: Request) -> str:
@@ -191,13 +277,15 @@ def render_report(report: NetworkReport, redact: Redactor) -> str:
 
 
 def _cut_body(text: str, redact: Redactor) -> tuple[str, int]:
-    """The text to show, with the secrets in it masked, and the full size in bytes."""
-    raw = text.encode()
-    if len(raw) <= BODY_SHOW_LIMIT:
-        return redact(text), len(raw)
-    # Mask a little past the cut, so that a secret at the cut is still found.
-    head = redact(raw[: BODY_SHOW_LIMIT + 256].decode(errors="ignore"))
-    return head.encode()[:BODY_SHOW_LIMIT].decode(errors="ignore"), len(raw)
+    """The text to show, with the secrets in it masked, and the full size in bytes.
+
+    The whole text is masked before the cut, so that a secret at the cut is found.
+    """
+    size = len(text.encode())
+    masked = redact(text)
+    if size <= BODY_SHOW_LIMIT:
+        return masked, size
+    return masked.encode()[:BODY_SHOW_LIMIT].decode(errors="ignore"), size
 
 
 def _body_block(title: str, text: str, redact: Redactor) -> list[str]:
@@ -236,7 +324,8 @@ def render_detail(request: Request, page: PageRef, redact: Redactor, *, lazy_bod
         *_header_block("Request headers", request.request_headers, redact),
     ]
     if request.post_data:
-        lines += _body_block("Request body", request.post_data, redact)
+        content_type = next((v for n, v in request.request_headers.items() if n.lower() == "content-type"), None)
+        lines += _body_block("Request body", request.post_data, lambda t: redact(mask_request_body(t, content_type)))
     elif request.has_post_data:
         lines.append("Request body: not held. Chrome did not send it with the request.")
     lines += _header_block("Response headers", request.response_headers, redact)
@@ -273,9 +362,13 @@ def read_matching(
     failed: bool,
     url: str | None,
     types: str,
+    redact: Redactor,
 ) -> tuple[list[Request], int, int, int]:
     """The requests that fit, newest first and at most ENTRY_LIMIT; then the counts of requests
-    that only the `types` filter hid, and how many of those failed. Requests shown count as read."""
+    that only the `types` filter hid, and how many of those failed. Requests shown count as read.
+
+    The `url` filter looks at the masked URL, the one a line shows, so a filter cannot be used
+    to find out a masked value."""
     needle = url.casefold() if url else None
     matching: list[Request] = []
     hidden = hidden_failed = 0
@@ -284,7 +377,7 @@ def read_matching(
             continue
         if failed and not request.failed:
             continue
-        if needle is not None and needle not in request.url.casefold():
+        if needle is not None and needle not in redact(request.url).casefold():
             continue
         if types != "all" and request.resource_type in HIDDEN_TYPES:
             hidden += 1
