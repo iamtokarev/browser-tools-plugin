@@ -255,7 +255,7 @@ class BrowserSession:
                 settings.allow_sites, settings.deny_sites, allow_file_urls=settings.allow_file_urls
             )
             enforcer = SiteEnforcer(connection, limits) if limits.active else None
-            capture = Capture(connection) if "debugging" in settings.groups else None
+            capture = Capture(connection, redact=sanitize_error_message) if "debugging" in settings.groups else None
             listeners = [listener for listener in (enforcer, capture) if listener is not None]
             if listeners:
                 targets = Targets(connection)

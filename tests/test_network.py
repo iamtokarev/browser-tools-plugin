@@ -754,3 +754,25 @@ async def test_a_url_filter_on_a_masked_value_matches_nothing(session: BrowserSe
     assert lines_of(by_value) == []
     assert len(lines_of(by_mask)) == 1
     assert "FAKESECRET" not in by_mask
+
+
+def test_page_titles_and_urls_are_masked_in_every_view_and_in_the_page_match():
+    from browser_tools_plugin.capture import Capture, UnknownPageError
+
+    capture = Capture(None, redact=sanitize_error_message)  # ty: ignore[invalid-argument-type]
+    for number, (title, url) in enumerate([("Login", "http://h/a?token=FAKESECRET123&x=1"), ("Other", "http://h/b")]):
+        buffer = PageBuffer(f"t{number}", redact=sanitize_error_message)
+        buffer.title, buffer.url = title, url
+        capture._pages[f"t{number}"] = buffer
+    assert capture.find("x=1", None).title == "Login"
+    assert capture.find("token=[redacted]", None).title == "Login"
+    for needle in ("FAKESECRET", "token=F", "fakesecret123"):
+        with pytest.raises(UnknownPageError) as raised:
+            capture.find(needle, None)
+        assert "FAKESECRET" not in str(raised.value).partition("Open pages:")[2]
+        assert "token=[redacted]&x=1" in str(raised.value)  # the "Open pages" list shows the masked URL
+    assert capture.pages[0].ref.url == "http://h/a?token=[redacted]&x=1"
+    assert "FAKESECRET" not in render_report(
+        capture.pages[1].read_requests(all=True, failed=False, url=None, types="all", redact=sanitize_error_message),
+        plain,
+    )

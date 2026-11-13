@@ -183,6 +183,19 @@ async def test_xhr_fetch_images_and_workers_to_a_refused_site_never_leave(
     assert other_site.hits == []
 
 
+async def test_a_page_match_cannot_reveal_a_masked_value_in_a_url(settings: Settings, fixture_url: str):
+    async with Browser(settings) as browser:
+        await browser.goto(f"{fixture_url}/other.html?token=FAKESECRETVALUE123&x=1")
+        await browser.run("await context.newPage(); return 1;")
+        by_value, by_value_error = await browser.raw("console", page="FAKESECRET")
+        by_mask, by_mask_error = await browser.raw("network", page="token=[redacted]", all=True)
+        header = await browser.call("console", all=True)
+    assert by_value_error and "matches no open page" in by_value
+    assert "FAKESECRET" not in by_value.partition("Open pages:")[2] and "token=[redacted]&x=1" in by_value
+    assert not by_mask_error and "FAKESECRET" not in by_mask
+    assert "FAKESECRET" not in header
+
+
 async def test_fetch_in_the_page_code_scope_and_not_in_the_page_is_refused_too(
     allow_a: Settings, site_a: str, site_b: str, other_site: OtherSite
 ):

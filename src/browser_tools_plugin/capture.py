@@ -52,8 +52,16 @@ class UnknownRequestError(LookupError):
 class PageBuffer:
     """Everything captured for one tab: its console entries and requests, with its title and URL."""
 
-    def __init__(self, target_id: str, limit: int = BUFFER_LIMIT, request_limit: int = REQUEST_BUFFER_LIMIT) -> None:
+    def __init__(
+        self,
+        target_id: str,
+        limit: int = BUFFER_LIMIT,
+        request_limit: int = REQUEST_BUFFER_LIMIT,
+        *,
+        redact: Redactor = str,
+    ) -> None:
         self.target_id = target_id
+        self._redact = redact
         self.title = ""
         self.url = ""
         self.dropped = 0
@@ -67,7 +75,8 @@ class PageBuffer:
 
     @property
     def ref(self) -> PageRef:
-        return PageRef(self.title, self.url)
+        """The title and URL as the agent may read them: the secrets in them are masked."""
+        return PageRef(self._redact(self.title), self._redact(self.url))
 
     @property
     def held(self) -> int:
@@ -161,8 +170,10 @@ class Capture(TargetListener):
         request_limit: int = REQUEST_BUFFER_LIMIT,
         body_item_limit: int = BODY_ITEM_LIMIT,
         body_cache_limit: int = BODY_CACHE_LIMIT,
+        redact: Redactor,
     ) -> None:
         self._cdp = connection
+        self._redact = redact
         self._limit = limit
         self._request_limit = request_limit
         self._body_item_limit = body_item_limit
@@ -187,10 +198,15 @@ class Capture(TargetListener):
                 return self._pages[active_id]
             raise UnknownPageError("The active page has no capture buffer. Call snapshot, then try again.")
         needle = query.strip().casefold()
-        found = [p for p in self._pages.values() if needle in p.title.casefold() or needle in p.url.casefold()]
+        # The match looks at what a header shows, so that a query cannot be used to find out a masked value.
+        found = []
+        for page in self._pages.values():
+            ref = page.ref
+            if needle in ref.title.casefold() or needle in ref.url.casefold():
+                found.append(page)
         if len(found) == 1:
             return found[0]
-        open_pages = "; ".join(f"{p.title} | {p.url}" for p in self._pages.values()) or "none"
+        open_pages = "; ".join(f"{p.ref.title} | {p.ref.url}" for p in self._pages.values()) or "none"
         reason = "matches no open page" if not found else f"matches {len(found)} open pages"
         raise UnknownPageError(f"The page {query!r} {reason}. Open pages: {open_pages}.")
 
@@ -295,7 +311,9 @@ class Capture(TargetListener):
         if info["type"] not in ("page", "iframe"):
             return []
         if info["type"] == "page":
-            buffer = self._pages.setdefault(target_id, PageBuffer(target_id, self._limit, self._request_limit))
+            buffer = self._pages.setdefault(
+                target_id, PageBuffer(target_id, self._limit, self._request_limit, redact=self._redact)
+            )
             buffer.title, buffer.url = info.get("title", ""), info.get("url", "")
         send = self._cdp.send
         return [
@@ -325,7 +343,7 @@ class Capture(TargetListener):
             self._on_log_entry(buffer, params["entry"])
         elif method == "Page.frameNavigated" and not params["frame"].get("parentId"):
             buffer.url = params["frame"]["url"]
-            buffer.add(at=time.time(), level="info", text=f"navigated to {buffer.url}", marker=True)
+            buffer.add(at=time.time(), level="info", text=f"navigated to {buffer.ref.url}", marker=True)
         return None
 
     # --- Requests --------------------------------------------------------------------------
