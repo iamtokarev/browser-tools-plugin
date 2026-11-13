@@ -1,0 +1,15 @@
+<!doctype html>
+<title>Console fixture</title>
+<script>
+  console.log("hello", { a: 1, b: "x" }, [1, 2, 3]);
+  console.warn("careful %s", "now");
+  console.error("bad thing");
+  console.debug("debug detail");
+  fetch("/missing.json");
+  setTimeout(() => {
+    throw new Error("boom");
+  }, 20);
+</script>
+<iframe src="frame.html"></iframe>
+<a id="popup" href="popup.html" target="_blank">popup</a>
+<button id="log" onclick="console.log('clicked')">log</button>

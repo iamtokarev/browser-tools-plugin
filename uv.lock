@@ -41,6 +41,7 @@ dependencies = [
     { name = "mcp" },
     { name = "stagehand" },
     { name = "stagehand-middleware" },
+    { name = "websockets" },
 ]
 
 [package.dev-dependencies]
@@ -56,6 +57,7 @@ requires-dist = [
     { name = "mcp", specifier = ">=2.3,<3" },
     { name = "stagehand", specifier = "==4.4.0" },
     { name = "stagehand-middleware", specifier = "==0.1.2" },
+    { name = "websockets", specifier = ">=16.1.1,<18" },
 ]
 
 [package.metadata.requires-dev]

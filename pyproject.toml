@@ -11,6 +11,7 @@ dependencies = [
     "mcp>=2.3,<3",
     "stagehand==4.4.0",
     "stagehand-middleware==0.1.2",
+    "websockets>=16.1.1,<18",
 ]
 
 [project.scripts]

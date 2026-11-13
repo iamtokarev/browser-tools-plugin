@@ -41,7 +41,7 @@ def launch_forbidden(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 async def test_lists_tools_without_launching_the_browser(launch_forbidden: list[str], tmp_path):
     async with Client(create_server(Settings(data_dir=tmp_path))) as client:
         result = await client.list_tools()
-    assert [tool.name for tool in result.tools] == ["snapshot", "run"]
+    assert [tool.name for tool in result.tools] == ["snapshot", "run", "console"]
     assert launch_forbidden == []
     assert list(tmp_path.iterdir()) == []  # no profile directory created either
 
@@ -65,8 +65,36 @@ async def test_description_is_our_own_text_not_upstreams(launch_forbidden: list[
 
 
 async def test_sends_the_instructions_string_from_the_spec(launch_forbidden: list[str], tmp_path):
-    async with Client(create_server(Settings(data_dir=tmp_path))) as client:
+    settings = Settings(data_dir=tmp_path, groups=("core",))
+    async with Client(create_server(settings)) as client:
         assert client.instructions == EXPECTED_INSTRUCTIONS
+
+
+async def test_instructions_gain_the_debugging_sentence_when_the_group_is_on(launch_forbidden: list[str], tmp_path):
+    async with Client(create_server(Settings(data_dir=tmp_path))) as client:
+        assert client.instructions == (
+            EXPECTED_INSTRUCTIONS
+            + " console and network list what the page logged and requested since you last looked."
+        )
+
+
+async def test_console_is_read_only_and_takes_the_documented_arguments(launch_forbidden: list[str], tmp_path):
+    async with Client(create_server(Settings(data_dir=tmp_path))) as client:
+        tool = next(t for t in (await client.list_tools()).tools if t.name == "console")
+    assert tool.annotations is not None
+    assert tool.annotations.read_only_hint is True
+    properties = tool.input_schema["properties"]
+    assert set(properties) == {"all", "level", "page"}
+    assert properties["level"]["enum"] == ["error", "warning", "info", "debug"]
+    assert properties["level"]["default"] == "info"
+    assert tool.input_schema["additionalProperties"] is False
+
+
+async def test_removing_debugging_from_groups_hides_console(launch_forbidden: list[str], tmp_path):
+    async with Client(create_server(Settings(data_dir=tmp_path, groups=("core",)))) as client:
+        assert [t.name for t in (await client.list_tools()).tools] == ["snapshot", "run"]
+        result = await client.call_tool("console", {})
+        assert result.is_error
 
 
 async def test_server_is_named_browser_tools(launch_forbidden: list[str], tmp_path):

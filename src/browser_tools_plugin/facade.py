@@ -18,6 +18,9 @@ from stagehand_middleware.facade import tools as _upstream_tools
 from stagehand_middleware.facade.bundle import facade_tools
 from stagehand_middleware.facade.tools import StagehandFacadeTools, sanitize_error_message
 
+from .capture import Capture
+from .cdp import CdpConnection
+from .console_text import render_report
 from .results import NO_VALUE, page_code_text
 from .settings import Settings
 
@@ -72,6 +75,9 @@ class BrowserSession:
         self._lock = asyncio.Lock()
         self._tools: StagehandFacadeTools | None = None
         self._stagehand: Stagehand | None = None
+        self._connection: CdpConnection | None = None
+        self._capture: Capture | None = None
+        self._closing = False
 
     @property
     def settings(self) -> Settings:
@@ -80,6 +86,11 @@ class BrowserSession:
     @property
     def launched(self) -> bool:
         return self._tools is not None
+
+    @property
+    def capturing(self) -> bool:
+        """Whether a launched browser is being captured: the debugging group was on at launch."""
+        return self._capture is not None
 
     async def snapshot(self, *, include_iframes: bool = True) -> str:
         """The active page's tree, led by one `Page: <title> | <url>` line."""
@@ -108,10 +119,30 @@ class BrowserSession:
                 return f"{NO_VALUE} {await self._current_url()}"
             return text
 
+    async def console(self, *, level: str = "info", all: bool = False, page: str | None = None) -> str:
+        """What a page logged: the active page, or the one `page` names.
+
+        Needs the debugging group; reads the capture buffer and does not launch the browser.
+        """
+        async with self._lock:
+            if self._capture is None:
+                if self._tools is None and "debugging" in self._settings.groups:
+                    return "No browser is open yet, so nothing was logged. Open a page with run, then call console."
+                raise RuntimeError("Console capture is off. Add debugging to the groups setting to turn it on.")
+            active = await self._active_page_id() if page is None else None
+            return render_report(await self._capture.read(page, active, level=level, all=all))
+
     async def close(self) -> None:
         """Close the browser if one was launched. Never raises."""
         async with self._lock:
             tools, self._tools, self._stagehand = self._tools, None, None
+            connection, self._connection, self._capture = self._connection, None, None
+            self._closing = True
+            try:
+                if connection is not None:
+                    await connection.close()
+            finally:
+                self._closing = False
             if tools is None:
                 return
             try:
@@ -135,11 +166,23 @@ class BrowserSession:
             downloads_path=settings.download_dir,
             accept_downloads=True,
         )
+        connection: CdpConnection | None = None
         try:
+            # The host connection comes first, so that capture sees the first navigation.
+            if browser.cdp_url is None:
+                raise RuntimeError("The browser did not report a debugging address.")
+            connection = await CdpConnection.connect(browser.cdp_url)
+            capture = Capture(connection) if "debugging" in settings.groups else None
+            if capture is not None:
+                await capture.start()
             stagehand = await Stagehand.create(browser=browser)
         except BaseException:
+            if connection is not None:
+                await connection.close()
             await browser.close()
             raise
+        connection.add_close_callback(self._connection_closed)
+        self._connection, self._capture = connection, capture
         self._stagehand = stagehand
         self._tools = StagehandFacadeTools(
             stagehand,
@@ -147,6 +190,19 @@ class BrowserSession:
             quiet_wait=settings.quiet_wait,
         )
         return self._tools
+
+    def _connection_closed(self) -> None:
+        if not self._closing:
+            _log("browser-tools: the connection to the browser closed.")
+
+    async def _active_page_id(self) -> str | None:
+        assert self._stagehand is not None
+        context = self._stagehand.browser.context
+        page = await context.active_page()
+        if page is None:
+            pages = await context.pages()
+            page = pages[-1] if pages else None
+        return page.page_id if page is not None else None
 
     async def _current_url(self) -> str:
         assert self._stagehand is not None

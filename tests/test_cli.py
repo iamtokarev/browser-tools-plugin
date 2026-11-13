@@ -125,8 +125,8 @@ async def test_a_bad_setting_leaves_the_tools_listed_and_every_call_one_error(tm
     (tmp_path / CONFIG_FILE).write_text("run_timeout = 0\nresult_ceiling = 'many'\n")
     loaded = load_settings({}, {"PLUGIN_DATA": str(tmp_path)})
     async with Client(create_server(loaded.settings, problems=loaded.problems)) as client:
-        assert [t.name for t in (await client.list_tools()).tools] == ["snapshot", "run"]
-        for name, args in (("snapshot", {}), ("run", {"code": "1"})):
+        assert [t.name for t in (await client.list_tools()).tools] == ["snapshot", "run", "console"]
+        for name, args in (("snapshot", {}), ("run", {"code": "1"}), ("console", {})):
             result = await client.call_tool(name, args)
             assert result.is_error
             (part,) = result.content
@@ -144,7 +144,7 @@ def test_the_stdio_server_starts_with_a_broken_file_and_answers_with_one_error(t
     answer = next(m for m in messages if m.get("id") == 2)
     assert answer["result"]["isError"] is True
     assert str(tmp_path / CONFIG_FILE) in answer["result"]["content"][0]["text"]
-    assert len(next(m for m in messages if m.get("id") == 3)["result"]["tools"]) == 2
+    assert len(next(m for m in messages if m.get("id") == 3)["result"]["tools"]) == 3
 
 
 def test_the_stdio_server_takes_flags(tmp_path: Path):
