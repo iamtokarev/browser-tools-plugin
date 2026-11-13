@@ -90,7 +90,7 @@ async def test_lists_tools_over_stdio_without_launching_chrome(tmp_path: Path):
     with anyio.fail_after(60):
         async with Client(params) as client:
             tools = (await client.list_tools()).tools
-            assert [t.name for t in tools] == ["snapshot", "run", "console"]
+            assert [t.name for t in tools] == ["snapshot", "run", "console", "network"]
             assert client.server_info is not None
             assert client.server_info.name == "browser-tools"
             assert chrome_processes_using(tmp_path) == []
@@ -124,5 +124,5 @@ def test_uv_run_browser_tools_serves_tools_without_a_browser(tmp_path: Path):
         messages = exchange([*INIT, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}], tmp_path)
     finally:
         COMMAND = saved
-    assert [t["name"] for t in messages[1]["result"]["tools"]] == ["snapshot", "run", "console"]
+    assert [t["name"] for t in messages[1]["result"]["tools"]] == ["snapshot", "run", "console", "network"]
     assert list(tmp_path.iterdir()) == []

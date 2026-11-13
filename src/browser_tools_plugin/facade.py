@@ -18,9 +18,9 @@ from stagehand_middleware.facade import tools as _upstream_tools
 from stagehand_middleware.facade.bundle import facade_tools
 from stagehand_middleware.facade.tools import StagehandFacadeTools, sanitize_error_message
 
+from . import console_text, network_text
 from .capture import Capture
 from .cdp import CdpConnection
-from .console_text import render_report
 from .results import NO_VALUE, page_code_text
 from .settings import Settings
 
@@ -126,11 +126,39 @@ class BrowserSession:
         """
         async with self._lock:
             if self._capture is None:
-                if self._tools is None and "debugging" in self._settings.groups:
-                    return "No browser is open yet, so nothing was logged. Open a page with run, then call console."
-                raise RuntimeError("Console capture is off. Add debugging to the groups setting to turn it on.")
+                return self._nothing_captured("console", "logged")
             active = await self._active_page_id() if page is None else None
-            return render_report(await self._capture.read(page, active, level=level, all=all))
+            return console_text.render_report(await self._capture.read(page, active, level=level, all=all))
+
+    async def network(
+        self,
+        *,
+        all: bool = False,
+        page: str | None = None,
+        failed: bool = False,
+        url: str | None = None,
+        types: str = "default",
+        id: str | None = None,
+    ) -> str:
+        """The requests of a page, or the headers and body of the one request `id` names.
+
+        Needs the debugging group; reads the capture buffer and does not launch the browser.
+        Raises BodyNotHeldError when a text body is gone; its message holds the rest of the detail.
+        """
+        async with self._lock:
+            if self._capture is None:
+                return self._nothing_captured("network", "requested")
+            if id is not None:
+                request_page, request, late_body = await self._capture.request(id)
+                return network_text.render_detail(request, request_page, sanitize_error_message, lazy_body=late_body)
+            active = await self._active_page_id() if page is None else None
+            report = await self._capture.read_network(page, active, all=all, failed=failed, url=url, types=types)
+            return network_text.render_report(report, sanitize_error_message)
+
+    def _nothing_captured(self, tool: str, verb: str) -> str:
+        if self._tools is None and "debugging" in self._settings.groups:
+            return f"No browser is open yet, so nothing was {verb}. Open a page with run, then call {tool}."
+        raise RuntimeError(f"Capture is off. Add debugging to the groups setting to turn on {tool}.")
 
     async def close(self) -> None:
         """Close the browser if one was launched. Never raises."""

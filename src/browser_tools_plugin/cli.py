@@ -29,7 +29,7 @@ _HELP = {
     "allow_file_urls": "Allow file:// pages.",
     "download_dir": "Directory for downloads.",
     "artifact_dir": "Directory where page code may save screenshots.",
-    "result_ceiling": "Most characters in one snapshot or run result.",
+    "result_ceiling": "Most characters in one snapshot, run, console or network result.",
     "run_timeout": "Seconds before a run is stopped.",
     "capture_timeout": "Seconds before a snapshot or screenshot is stopped.",
     "quiet_wait": "End timed waits early when the page is quiet.",

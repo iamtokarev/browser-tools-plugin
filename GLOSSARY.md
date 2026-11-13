@@ -48,7 +48,7 @@ The one tab the core tools act on; a newly opened tab or popup becomes the activ
 _Avoid_: current tab, focused page
 
 **Result ceiling**:
-The largest amount of text a snapshot or run hands back in one tool result; beyond it the agent gets the head and a notice saying what was cut.
+The largest amount of text a snapshot, run, console or network call hands back in one tool result; beyond it the agent gets the head and a notice saying what was cut.
 _Avoid_: truncation limit, output cap
 
 **Quiet wait**:

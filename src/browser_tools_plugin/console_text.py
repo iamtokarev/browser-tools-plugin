@@ -159,6 +159,13 @@ def page_label(page: PageRef) -> str:
     return f"{cut(one_line(page.title), 80)} | {cut(one_line(page.url), 120)}"
 
 
+def other_pages_line(others: Sequence[PageRef]) -> str:
+    shown = others[:OTHER_PAGES_LIMIT]
+    text = "; ".join(page_label(p) for p in shown)
+    more = len(others) - len(shown)
+    return f"Other pages (name one in page): {text}" + (f"; and {more} more" if more else "")
+
+
 @dataclass(slots=True)
 class ConsoleReport:
     page: PageRef
@@ -190,9 +197,6 @@ def render_report(report: ConsoleReport) -> str:
     if report.matching == 0 and not report.all and report.held:
         lines.append(f"Nothing new. The buffer holds {report.held} entries; pass all: true to read them again.")
     if report.others:
-        shown = report.others[:OTHER_PAGES_LIMIT]
-        text = "; ".join(page_label(p) for p in shown)
-        more = len(report.others) - len(shown)
-        lines.append(f"Other pages (name one in page): {text}" + (f"; and {more} more" if more else ""))
+        lines.append(other_pages_line(report.others))
     lines.extend(entry_line(entry) for entry in report.shown)
     return "\n".join(lines)

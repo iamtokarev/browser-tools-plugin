@@ -43,3 +43,22 @@ def cap_snapshot(text: str, ceiling: int) -> str:
         "of this snapshot. Do not call snapshot again, because it returns the same tree. "
         "Find the rest with run code, for example by reading only the elements you need.]"
     )
+
+
+def cap_report(text: str, ceiling: int, advice: str, *, listing: bool) -> str:
+    """Above the ceiling: whole lines of the head, then a notice with what was cut.
+
+    The entries that were cut still count as read, so the notice says how to narrow the next call.
+    """
+    if len(text) <= ceiling:
+        return text
+    head = text[:ceiling]
+    if text[ceiling] != "\n" and "\n" in head:
+        head = head[: head.rindex("\n")]
+    cut = text[len(head) :]
+    lines = len(cut.strip("\n").splitlines())
+    read = ", and the entries in them count as read" if listing else ""
+    return (
+        f"{head}\n\n[Cut: {len(cut)} characters in {lines} lines are missing from the end of this result{read}. "
+        f"{advice}.]"
+    )

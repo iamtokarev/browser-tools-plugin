@@ -1,0 +1,26 @@
+<!doctype html>
+<title>Network fixture</title>
+<link rel="stylesheet" href="/api/style.css">
+<img src="pixel.png" alt="pixel">
+<script>
+  document.cookie = "fake=FAKECOOKIEVALUE";
+  const get = async (...args) => (await fetch(...args)).text(); // a body that is not read never finishes
+  (async () => {
+    await get("/api/items");
+    await get("/api/missing");
+    await get("/api/echo", {
+      method: "POST",
+      headers: { Authorization: "Bearer FAKETOKEN0123456789", "Content-Type": "application/json" },
+      body: JSON.stringify({ hello: "world" }),
+    });
+    await get("/api/secret");
+    await get("/api/medium");
+    await get("/api/big");
+    await get("/api/bin");
+    await get("/api/redirect");
+    try {
+      await get(`http://127.0.0.1:${new URLSearchParams(location.search).get("refused")}/refused`);
+    } catch (error) {}
+    window.requestsDone = true;
+  })();
+</script>
