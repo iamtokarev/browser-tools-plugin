@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .sites import parse_entry
+
 APP_NAME = "browser-tools"
 CONFIG_FILE = "config.toml"
 ENV_PREFIX = "BROWSER_TOOLS_"
@@ -141,6 +143,13 @@ def _parse_list(value: Any, from_text: bool) -> tuple[str, ...]:
     return tuple(item.strip() for item in value)
 
 
+def _parse_sites(value: Any, from_text: bool) -> tuple[str, ...]:
+    entries = _parse_list(value, from_text)
+    for entry in entries:
+        parse_entry(entry)  # raises ValueError that names the entry
+    return entries
+
+
 def _parse_groups(value: Any, from_text: bool) -> tuple[str, ...]:
     groups = _parse_list(value, from_text)
     unknown = [name for name in groups if name not in GROUP_NAMES]
@@ -171,8 +180,8 @@ _SPECS = (
     _Spec("data_dir", _parse_path, in_file=False),
     _Spec("chrome_path", _parse_chrome_path),
     _Spec("groups", _parse_groups),
-    _Spec("allow_sites", _parse_list),
-    _Spec("deny_sites", _parse_list),
+    _Spec("allow_sites", _parse_sites),
+    _Spec("deny_sites", _parse_sites),
     _Spec("allow_file_urls", _parse_bool),
     _Spec("download_dir", _parse_path),
     _Spec("artifact_dir", _parse_path),

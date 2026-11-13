@@ -192,6 +192,10 @@ def test_data_dir_in_the_file_is_a_problem_that_names_the_file(tmp_path: Path):
         ('groups = ["core", "nope"]', "groups"),
         ('groups = "core"', "groups"),
         ("allow_sites = [1]", "allow_sites"),
+        ('allow_sites = ["example.com", "example.com/path"]', "allow_sites"),
+        ('deny_sites = ["https://example.com/"]', "deny_sites"),
+        ('deny_sites = ["ftp://example.com"]', "deny_sites"),
+        ('allow_sites = ["*"]', "allow_sites"),
         ('download_dir = "relative/dir"', "download_dir"),
         ('chrome_path = "chrome"', "chrome_path"),
         ("colour = 1", "colour"),
@@ -276,3 +280,20 @@ def test_the_real_environment_does_not_leak_into_these_tests():
     assert not [k for k in os.environ if k.startswith("BROWSER_TOOLS_")]
     assert "PLUGIN_DATA" not in os.environ
     assert "CLAUDE_PLUGIN_DATA" not in os.environ
+
+
+def test_a_path_in_a_site_entry_is_a_problem_that_says_what_is_wrong(tmp_path: Path):
+    loaded = load(tmp_path, env={"BROWSER_TOOLS_ALLOW_SITES": "example.com, other.test/page"})
+    (problem,) = loaded.problems
+    assert problem.setting == "allow_sites"
+    assert "BROWSER_TOOLS_ALLOW_SITES" in problem.describe()
+    assert "'other.test/page'" in problem.describe()
+    assert "no path" in problem.describe()
+    assert loaded.settings.allow_sites == ()
+
+
+def test_valid_site_entries_are_kept_as_written(tmp_path: Path):
+    entries = '["example.com", "*.example.com", "localhost:3000", "https://example.com:8443"]'
+    loaded = load(tmp_path, config=f"deny_sites = {entries}\n")
+    assert loaded.problems == ()
+    assert loaded.settings.deny_sites == ("example.com", "*.example.com", "localhost:3000", "https://example.com:8443")

@@ -6,9 +6,7 @@ It keeps console entries and network requests. Text bodies are cached as each re
 because Chrome drops a body once its page navigates.
 """
 
-import asyncio
 import collections
-import contextlib
 import itertools
 import time
 from collections.abc import Awaitable
@@ -35,6 +33,7 @@ from .network_text import (
     Request,
     read_matching,
 )
+from .targets import TargetListener
 
 _CONSOLE_LEVELS = {"debug": "debug", "error": "error", "assert": "error", "warning": "warning"}
 _LOG_LEVELS = {"verbose": "debug", "info": "info", "warning": "warning", "error": "error"}
@@ -151,8 +150,8 @@ class PageBuffer:
         )
 
 
-class Capture:
-    """Attaches to every page and iframe and fills one PageBuffer per tab."""
+class Capture(TargetListener):
+    """Listens to every page and iframe and fills one PageBuffer per tab."""
 
     def __init__(
         self,
@@ -173,9 +172,6 @@ class Capture:
         self._early_headers: dict[tuple[str, str], dict[str, str]] = {}  # extra info that came first
         self._redirected: dict[tuple[str, str], Request] = {}  # the last redirect hop of a request
         self._pages: dict[str, PageBuffer] = {}
-        self._owner: dict[str, str] = {}  # session id -> target id of the tab it belongs to
-        self._claimed: set[str] = set()  # targets that were attached, or are being attached
-        self._started = False
 
     @property
     def pages(self) -> list[PageBuffer]:
@@ -183,29 +179,6 @@ class Capture:
 
     def page(self, target_id: str) -> PageBuffer | None:
         return self._pages.get(target_id)
-
-    async def start(self) -> None:
-        """Attach to the tabs that exist, and to each new tab and iframe from its creation."""
-        if self._started:
-            return
-        self._started = True
-        self._cdp.add_handler(self._on_event)
-        await self._cdp.send("Target.setDiscoverTargets", {"discover": True})
-        await self._cdp.send(
-            "Target.setAutoAttach",
-            {
-                "autoAttach": True,
-                "waitForDebuggerOnStart": True,
-                "flatten": True,
-                "filter": [{"type": "page"}, {"type": "iframe"}, {"exclude": True}],
-            },
-        )
-        targets = (await self._cdp.send("Target.getTargets"))["targetInfos"]
-        for info in targets:
-            if info["type"] == "page" and info["targetId"] not in self._claimed:
-                self._claimed.add(info["targetId"])
-                reply = await self._cdp.send("Target.attachToTarget", {"targetId": info["targetId"], "flatten": True})
-                await self._setup(reply["sessionId"], info, None, waiting=False)
 
     def find(self, query: str | None, active_id: str | None) -> PageBuffer:
         """The active page, or the one page whose title or URL holds `query`."""
@@ -234,7 +207,7 @@ class Capture:
         for target_id in [t for t in self._pages if t not in alive]:
             self._forget(target_id)
         for info in alive.values():
-            self._on_target_info(info)
+            self.on_target_info(info)
 
     async def read(self, query: str | None, active_id: str | None, *, level: str, all: bool) -> ConsoleReport:
         await self.refresh()
@@ -308,84 +281,41 @@ class Capture:
 
     # --- Attaching -------------------------------------------------------------------------
 
-    def _on_event(self, message: dict[str, Any]) -> Awaitable[None] | None:
-        method, params, session = message.get("method"), message.get("params", {}), message.get("sessionId")
-        if method == "Target.attachedToTarget":
-            return self._on_attached(params, session)
-        if method in ("Target.targetCreated", "Target.targetInfoChanged"):
-            self._on_target_info(params["targetInfo"])
-        elif method == "Target.targetDestroyed":
-            self._forget(params["targetId"])
-        elif method == "Target.detachedFromTarget":
-            self._owner.pop(params.get("sessionId"), None)
-        elif session in self._owner:
-            return self._on_page_event(self._pages.get(self._owner[session]), session, method, params)
-        return None
-
-    def _on_target_info(self, info: dict[str, Any]) -> None:
+    def on_target_info(self, info: dict[str, Any]) -> None:
         if info["type"] != "page":
             return
         buffer = self._pages.get(info["targetId"])
         if buffer is not None:
             buffer.title, buffer.url = info.get("title", ""), info.get("url", "")
 
-    def _on_attached(self, params: dict[str, Any], parent_session: str | None) -> Awaitable[None] | None:
-        info = params["targetInfo"]
-        waiting = params.get("waitingForDebugger", False)
+    def on_target_destroyed(self, target_id: str) -> None:
+        self._forget(target_id)
+
+    def on_attach(self, session: str, info: dict[str, Any], target_id: str) -> list[Awaitable[Any]]:
         if info["type"] not in ("page", "iframe"):
-            # The filter keeps these away; if one arrives, never leave it paused.
-            return self._resume(params["sessionId"]) if waiting else None
-        if info["targetId"] in self._claimed:
-            return None  # start() attached this tab itself
-        self._claimed.add(info["targetId"])
-        return self._setup(params["sessionId"], info, parent_session, waiting=waiting)
-
-    async def _resume(self, session: str) -> None:
-        with contextlib.suppress(CdpError):
-            await self._cdp.send("Runtime.runIfWaitingForDebugger", session=session)
-
-    async def _setup(self, session: str, info: dict[str, Any], parent_session: str | None, *, waiting: bool) -> None:
-        target_id = info["targetId"] if info["type"] == "page" else self._owner.get(parent_session or "")
-        if target_id is None:
-            if waiting:
-                await self._resume(session)
-            return
-        self._owner[session] = target_id
+            return []
         if info["type"] == "page":
             buffer = self._pages.setdefault(target_id, PageBuffer(target_id, self._limit, self._request_limit))
             buffer.title, buffer.url = info.get("title", ""), info.get("url", "")
-        # Send every command without waiting for each answer, and resume last. A popup opened by
-        # `target=_blank` answers no command until it resumes, so waiting for the first answer
-        # would stall; resuming first would lose its first events.
         send = self._cdp.send
-        commands = [
+        return [
             send("Runtime.enable", session=session),
             send("Log.enable", session=session),
             send("Network.enable", session=session),
             send("Page.enable", session=session),
-            send(
-                "Target.setAutoAttach",
-                {
-                    "autoAttach": True,
-                    "waitForDebuggerOnStart": True,
-                    "flatten": True,
-                    "filter": [{"type": "iframe"}, {"exclude": True}],
-                },
-                session=session,
-            ),
         ]
-        if waiting:
-            commands.append(send("Runtime.runIfWaitingForDebugger", session=session))
-        await asyncio.gather(*commands, return_exceptions=True)
+
+    def on_event(self, target_id: str, session: str, method: str, params: dict[str, Any]) -> Awaitable[None] | None:
+        return self._on_page_event(self._pages.get(target_id), session, method, params)
 
     # --- Events ----------------------------------------------------------------------------
 
     def _on_page_event(
-        self, buffer: PageBuffer | None, session: str, method: str | None, params: dict[str, Any]
+        self, buffer: PageBuffer | None, session: str, method: str, params: dict[str, Any]
     ) -> Awaitable[None] | None:
         if buffer is None:
             return None
-        if method and method.startswith("Network."):
+        if method.startswith("Network."):
             return self._on_network_event(buffer, session, method, params)
         if method == "Runtime.consoleAPICalled":
             self._on_console_call(buffer, params)

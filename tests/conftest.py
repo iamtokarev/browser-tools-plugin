@@ -3,6 +3,7 @@ import http.server
 import os
 import shutil
 import threading
+import urllib.parse
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -70,6 +71,9 @@ class _QuietHandler(http.server.SimpleHTTPRequestHandler):
             self._send(200, bytes(range(256)) * 8, "application/octet-stream")
         elif path == "/api/style.css":
             self._send(200, b"body { margin: 0; }", "text/css")
+        elif path == "/api/redirect-to":
+            target = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)["url"][0]
+            self._send(302, b"", "text/plain", {"Location": target})
         elif path == "/api/redirect":
             self._send(302, b"", "text/plain", {"Location": "/api/items"})
         else:
@@ -116,3 +120,46 @@ def isolated_environment(monkeypatch: pytest.MonkeyPatch) -> None:
 def settings(tmp_path: Path) -> Settings:
     """Headless, with every directory under tmp_path: never the user's own profile."""
     return Settings(data_dir=tmp_path / "data", chrome_path=find_chrome())
+
+
+class OtherSite:
+    """A second origin on 127.0.0.1 that records every request it gets, as the ground truth of
+    "no request reached the site". It answers any path with a small page and allows any origin."""
+
+    def __init__(self) -> None:
+        self.hits: list[str] = []
+        site = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, format: str, *args: object) -> None:
+                pass
+
+            def do_GET(self) -> None:
+                site.hits.append(self.path)
+                body = b"<!doctype html><title>Other site</title><h1>Other site reached</h1>"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(body)
+
+            do_POST = do_GET
+
+        self.server = _FixtureServer(("127.0.0.1", 0), Handler)
+        self.port = self.server.server_port
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def url(self, host: str = "127.0.0.1", path: str = "/") -> str:
+        return f"http://{host}:{self.port}{path}"
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
+
+
+@pytest.fixture
+def other_site() -> Iterator[OtherSite]:
+    site = OtherSite()
+    yield site
+    site.close()

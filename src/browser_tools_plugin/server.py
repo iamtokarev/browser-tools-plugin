@@ -178,7 +178,10 @@ def run_description(settings: Settings) -> str:
         "Element IDs are valid only for the latest snapshot of the active page; "
         "a new snapshot or a changed URL makes them stale. "
         f"A run is stopped after {settings.run_timeout:g} s, and some of it may have taken effect. "
-        "Split long work into smaller runs."
+        "Split long work into smaller runs. "
+        "The user may limit which sites the browser can open. A refused page shows "
+        "`Blocked by site limits: ...` and the result ends with `Refused by site limits: ...`. "
+        "Do not try to get around a refusal."
     )
     if settings.quiet_wait:
         text += (

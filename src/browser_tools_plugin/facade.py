@@ -21,10 +21,20 @@ from stagehand_middleware.facade.tools import StagehandFacadeTools, sanitize_err
 from . import console_text, network_text
 from .capture import Capture
 from .cdp import CdpConnection
+from .limits import SiteEnforcer, refusal_notice
 from .results import NO_VALUE, page_code_text
 from .settings import Settings
+from .sites import SiteLimits
+from .targets import Targets
 
-__all__ = ["BrowserSession", "RunTimeoutError", "find_chrome", "sanitize_error_message", "upstream_tool"]
+__all__ = [
+    "BrowserLostError",
+    "BrowserSession",
+    "RunTimeoutError",
+    "find_chrome",
+    "sanitize_error_message",
+    "upstream_tool",
+]
 
 
 def upstream_tool(name: str) -> dict[str, Any]:
@@ -53,6 +63,16 @@ class RunTimeoutError(Exception):
         )
 
 
+class BrowserLostError(Exception):
+    """The browser is gone. The next call starts a fresh one."""
+
+    def __init__(self, cause: str) -> None:
+        super().__init__(
+            f"The browser closed unexpectedly ({cause}). Open tabs and page state are gone; "
+            "call the tool again to start a fresh browser, then navigate back."
+        )
+
+
 def _check_run_arguments(code: str | None, actions: Sequence[Mapping[str, Any]] | None) -> None:
     """Upstream's own checks on run arguments, which would otherwise run only after a launch."""
     if (code is None) == (actions is None):
@@ -77,6 +97,8 @@ class BrowserSession:
         self._stagehand: Stagehand | None = None
         self._connection: CdpConnection | None = None
         self._capture: Capture | None = None
+        self._enforcer: SiteEnforcer | None = None
+        self._lost: str | None = None  # why the browser counts as lost, until the next call reports it
         self._closing = False
 
     @property
@@ -95,10 +117,12 @@ class BrowserSession:
     async def snapshot(self, *, include_iframes: bool = True) -> str:
         """The active page's tree, led by one `Page: <title> | <url>` line."""
         async with self._lock:
+            await self._raise_if_lost()
             tools = await self._ensure_launched()
             tree = await tools.snapshot(include_iframes=include_iframes)
             header = await asyncio.wait_for(self._header(), self._settings.capture_timeout)
-            return f"{header}\n{tree}"
+            await self._raise_if_lost()
+            return self._with_refusals(f"{header}\n{tree}")
 
     async def run(self, *, code: str | None = None, actions: Sequence[Mapping[str, Any]] | None = None) -> str:
         """Run page code or a batch of actions on the active page; pass exactly one.
@@ -107,17 +131,20 @@ class BrowserSession:
         """
         _check_run_arguments(code, actions)  # before the lock and before any launch
         async with self._lock:
+            await self._raise_if_lost()
             tools = await self._ensure_launched()
             try:
                 value = await tools.run(code=code, actions=actions)
             except RPCError as error:
+                await self._raise_if_lost()
                 if re.search(r"callback batch timed out", str(error), re.I):
                     raise RunTimeoutError(self._settings.run_timeout) from None
                 raise
+            await self._raise_if_lost()
             text = page_code_text(value)
             if text is None:
-                return f"{NO_VALUE} {await self._current_url()}"
-            return text
+                text = f"{NO_VALUE} {await self._current_url()}"
+            return self._with_refusals(text)
 
     async def console(self, *, level: str = "info", all: bool = False, page: str | None = None) -> str:
         """What a page logged: the active page, or the one `page` names.
@@ -125,6 +152,7 @@ class BrowserSession:
         Needs the debugging group; reads the capture buffer and does not launch the browser.
         """
         async with self._lock:
+            await self._raise_if_lost()
             if self._capture is None:
                 return self._nothing_captured("console", "logged")
             active = await self._active_page_id() if page is None else None
@@ -146,6 +174,7 @@ class BrowserSession:
         Raises BodyNotHeldError when a text body is gone; its message holds the rest of the detail.
         """
         async with self._lock:
+            await self._raise_if_lost()
             if self._capture is None:
                 return self._nothing_captured("network", "requested")
             if id is not None:
@@ -165,20 +194,40 @@ class BrowserSession:
     async def close(self) -> None:
         """Close the browser if one was launched. Never raises."""
         async with self._lock:
-            tools, self._tools, self._stagehand = self._tools, None, None
-            connection, self._connection, self._capture = self._connection, None, None
-            self._closing = True
-            try:
-                if connection is not None:
-                    await connection.close()
-            finally:
-                self._closing = False
-            if tools is None:
-                return
-            try:
-                await tools.close()
-            except Exception as error:
-                _log(f"browser-tools: closing the browser failed: {error}")
+            await self._teardown()
+
+    async def _teardown(self) -> None:
+        """Close the connection and the browser, and forget both. Never raises."""
+        tools, self._tools, self._stagehand = self._tools, None, None
+        connection, self._connection, self._capture, self._enforcer = self._connection, None, None, None
+        self._closing = True
+        try:
+            if connection is not None:
+                await connection.close()
+        finally:
+            self._closing = False
+        if tools is None:
+            return
+        try:
+            await tools.close()
+        except Exception as error:
+            _log(f"browser-tools: closing the browser failed: {error}")
+
+    async def _raise_if_lost(self) -> None:
+        """Report a lost browser once, and drop it so that the next call launches a fresh one.
+
+        The site limits live on the host connection, so a browser without it must not go on.
+        """
+        if self._lost is None:
+            return
+        cause, self._lost = self._lost, None
+        await self._teardown()
+        raise BrowserLostError(cause)
+
+    def _with_refusals(self, text: str) -> str:
+        """The text, with a last paragraph that says what the site limits refused since the last call."""
+        notice = refusal_notice(self._enforcer.take_refusals()) if self._enforcer is not None else ""
+        return f"{text}\n\n{notice}" if notice else text
 
     async def _ensure_launched(self) -> StagehandFacadeTools:
         if self._tools is not None:
@@ -202,9 +251,17 @@ class BrowserSession:
             if browser.cdp_url is None:
                 raise RuntimeError("The browser did not report a debugging address.")
             connection = await CdpConnection.connect(browser.cdp_url)
+            limits = SiteLimits.from_entries(
+                settings.allow_sites, settings.deny_sites, allow_file_urls=settings.allow_file_urls
+            )
+            enforcer = SiteEnforcer(connection, limits) if limits.active else None
             capture = Capture(connection) if "debugging" in settings.groups else None
-            if capture is not None:
-                await capture.start()
+            listeners = [listener for listener in (enforcer, capture) if listener is not None]
+            if listeners:
+                targets = Targets(connection)
+                for listener in listeners:
+                    targets.add_listener(listener)
+                await targets.start()
             stagehand = await Stagehand.create(browser=browser)
         except BaseException:
             if connection is not None:
@@ -212,7 +269,7 @@ class BrowserSession:
             await browser.close()
             raise
         connection.add_close_callback(self._connection_closed)
-        self._connection, self._capture = connection, capture
+        self._connection, self._capture, self._enforcer = connection, capture, enforcer
         self._stagehand = stagehand
         self._tools = StagehandFacadeTools(
             stagehand,
@@ -224,6 +281,7 @@ class BrowserSession:
     def _connection_closed(self) -> None:
         if not self._closing:
             _log("browser-tools: the connection to the browser closed.")
+            self._lost = "the connection to the browser dropped"
 
     async def _active_page_id(self) -> str | None:
         assert self._stagehand is not None
