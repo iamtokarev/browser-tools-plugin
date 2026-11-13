@@ -11,13 +11,13 @@ import base64
 import contextlib
 import html
 import sys
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 from .cdp import CdpConnection, CdpError
 from .sites import SiteLimits
-from .targets import TargetListener
+from .targets import WORKER_TYPES, TargetListener
 
 BLOCKED_TITLE = "Blocked by site limits"
 BLOCKED_STATUS = 403
@@ -61,9 +61,11 @@ def refusal_notice(refusals: list[Refusal]) -> str:
 
 
 class SiteEnforcer(TargetListener):
-    def __init__(self, connection: CdpConnection, limits: SiteLimits) -> None:
+    def __init__(self, connection: CdpConnection, limits: SiteLimits, on_unsafe: Callable[[str], None]) -> None:
+        """`on_unsafe(cause)` is called when the browser cannot be kept under the limits and must be dropped."""
         self._cdp = connection
         self._limits = limits
+        self._on_unsafe = on_unsafe
         self._refusals: list[Refusal] = []
 
     def take_refusals(self) -> list[Refusal]:
@@ -86,8 +88,17 @@ class SiteEnforcer(TargetListener):
             print(
                 f"browser-tools: site limits could not start on a {info['type']}: {error}", file=sys.stderr, flush=True
             )
-            if info["type"] != "service_worker":
-                await self._close(target_id)
+            if info["type"] in WORKER_TYPES:
+                raise  # `Targets` keeps the worker paused and calls `on_attach_failed`
+            await self._close(target_id)
+
+    async def on_attach_failed(self, session: str, info: dict[str, Any], target_id: str, error: BaseException) -> None:
+        """A worker that cannot be covered is never resumed. An ordinary one is closed. The browser's own
+        extension runs the page code, so closing it would break the browser: the browser counts as lost."""
+        if str(info.get("url", "")).startswith("chrome-extension://"):
+            self._on_unsafe("the site limits could not be applied to the browser's own extension")
+            return
+        await self._close(target_id)
 
     def on_event(self, target_id: str, session: str, method: str, params: dict[str, Any]) -> Awaitable[None] | None:
         if method == "Fetch.requestPaused":

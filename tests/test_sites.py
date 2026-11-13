@@ -195,7 +195,75 @@ async def test_a_tab_where_the_enforcer_cannot_start_is_closed_not_left_open():
             if method == "Fetch.enable":
                 raise CdpError("no")
 
-    enforcer = SiteEnforcer(Stub(), limits(allow=("example.com",)))  # ty: ignore[invalid-argument-type]
+    enforcer = SiteEnforcer(Stub(), limits(allow=("example.com",)), lambda cause: None)  # ty: ignore[invalid-argument-type]
     (command,) = enforcer.on_attach("s1", {"type": "page"}, "t1")
     await command
     assert sent == ["Fetch.enable", "Target.closeTarget"]
+
+
+class _Stub:
+    def __init__(self, fail: str | None = None) -> None:
+        self.sent: list[str] = []
+        self._fail = fail
+
+    async def send(self, method: str, params: object = None, *, session: str | None = None) -> object:
+        from browser_tools_plugin.cdp import CdpError
+
+        self.sent.append(method)
+        if method == self._fail:
+            raise CdpError("no")
+        return {}
+
+
+async def test_an_ordinary_worker_where_the_enforcer_cannot_start_is_closed_and_never_resumed():
+    from browser_tools_plugin.limits import SiteEnforcer
+
+    stub = _Stub(fail="Fetch.enable")
+    lost: list[str] = []
+    enforcer = SiteEnforcer(stub, limits(allow=("example.com",)), on_unsafe=lost.append)  # ty: ignore[invalid-argument-type]
+    info = {"type": "service_worker", "url": "https://example.com/sw.js"}
+    (command,) = enforcer.on_attach("s1", info, "t1")
+    try:
+        await command
+    except Exception as error:  # the listener reports the failure; `Targets` then calls on_attach_failed
+        await enforcer.on_attach_failed("s1", info, "t1", error)
+    assert stub.sent == ["Fetch.enable", "Target.closeTarget"]
+    assert lost == []
+
+
+async def test_the_extension_service_worker_where_the_enforcer_cannot_start_makes_the_browser_lost():
+    from browser_tools_plugin.limits import SiteEnforcer
+
+    stub = _Stub(fail="Fetch.enable")
+    lost: list[str] = []
+    enforcer = SiteEnforcer(stub, limits(allow=("example.com",)), on_unsafe=lost.append)  # ty: ignore[invalid-argument-type]
+    info = {"type": "service_worker", "url": "chrome-extension://abc/service-worker.js"}
+    (command,) = enforcer.on_attach("s1", info, "t1")
+    try:
+        await command
+    except Exception as error:
+        await enforcer.on_attach_failed("s1", info, "t1", error)
+    assert stub.sent == ["Fetch.enable"]  # not closed, not resumed
+    assert len(lost) == 1 and "extension" in lost[0]
+
+
+async def test_targets_never_resumes_a_worker_that_a_listener_could_not_prepare():
+    from browser_tools_plugin.limits import SiteEnforcer
+    from browser_tools_plugin.targets import Targets
+
+    stub = _Stub(fail="Fetch.enable")
+    enforcer = SiteEnforcer(stub, limits(allow=("example.com",)), on_unsafe=lambda cause: None)  # ty: ignore[invalid-argument-type]
+    targets = Targets(stub)  # ty: ignore[invalid-argument-type]
+    targets.add_listener(enforcer)
+    for kind in ("service_worker", "shared_worker"):
+        stub.sent.clear()
+        info = {"type": kind, "targetId": "w1", "url": "https://example.com/w.js"}
+        await targets._setup("s1", info, None, waiting=True)
+        assert "Runtime.runIfWaitingForDebugger" not in stub.sent, kind
+    stub2 = _Stub()
+    targets = Targets(stub2)  # ty: ignore[invalid-argument-type]
+    targets.add_listener(SiteEnforcer(stub2, limits(allow=("example.com",)), on_unsafe=lambda cause: None))  # ty: ignore[invalid-argument-type]
+    await targets._setup(
+        "s1", {"type": "shared_worker", "targetId": "w2", "url": "https://example.com/w.js"}, None, waiting=True
+    )
+    assert stub2.sent == ["Fetch.enable", "Runtime.runIfWaitingForDebugger"]  # resumed after Fetch.enable

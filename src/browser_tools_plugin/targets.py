@@ -27,6 +27,12 @@ class TargetListener:
         """
         return []
 
+    def on_attach_failed(
+        self, session: str, info: dict[str, Any], target_id: str, error: BaseException
+    ) -> Awaitable[None] | None:
+        """A command from `on_attach` failed on a worker. The worker stays paused; deal with it here."""
+        return None
+
     def on_event(self, target_id: str, session: str, method: str, params: dict[str, Any]) -> Awaitable[None] | None:
         """An event of a session that belongs to the tab `target_id`."""
         return None
@@ -151,19 +157,31 @@ class Targets:
         commands: list[Awaitable[Any]] = []
         for listener in self._listeners:
             commands.extend(listener.on_attach(session, info, target_id))
-        if info["type"] not in WORKER_TYPES:
-            commands.append(
-                self._cdp.send(
-                    "Target.setAutoAttach",
-                    {
-                        "autoAttach": True,
-                        "waitForDebuggerOnStart": True,
-                        "flatten": True,
-                        "filter": [{"type": "iframe"}, {"exclude": True}],
-                    },
-                    session=session,
-                )
+        if info["type"] in WORKER_TYPES:
+            # A worker has no popup trap, so every command is answered before it runs. If one fails,
+            # the worker is never resumed: a worker that no listener covers must not run.
+            results = await asyncio.gather(*commands, return_exceptions=True)
+            failure = next((result for result in results if isinstance(result, BaseException)), None)
+            if failure is not None:
+                for listener in self._listeners:
+                    outcome = listener.on_attach_failed(session, info, target_id, failure)
+                    if outcome is not None:
+                        await outcome
+            elif waiting:
+                await self._resume(session)
+            return
+        commands.append(
+            self._cdp.send(
+                "Target.setAutoAttach",
+                {
+                    "autoAttach": True,
+                    "waitForDebuggerOnStart": True,
+                    "flatten": True,
+                    "filter": [{"type": "iframe"}, {"exclude": True}],
+                },
+                session=session,
             )
+        )
         if waiting:
             commands.append(self._cdp.send("Runtime.runIfWaitingForDebugger", session=session))
         await asyncio.gather(*commands, return_exceptions=True)

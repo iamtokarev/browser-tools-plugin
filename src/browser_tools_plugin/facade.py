@@ -254,7 +254,7 @@ class BrowserSession:
             limits = SiteLimits.from_entries(
                 settings.allow_sites, settings.deny_sites, allow_file_urls=settings.allow_file_urls
             )
-            enforcer = SiteEnforcer(connection, limits) if limits.active else None
+            enforcer = SiteEnforcer(connection, limits, self._unsafe) if limits.active else None
             capture = Capture(connection, redact=sanitize_error_message) if "debugging" in settings.groups else None
             listeners = [listener for listener in (enforcer, capture) if listener is not None]
             if listeners:
@@ -277,6 +277,12 @@ class BrowserSession:
             quiet_wait=settings.quiet_wait,
         )
         return self._tools
+
+    def _unsafe(self, cause: str) -> None:
+        """The site limits cannot be kept, so the next call reports the browser as lost."""
+        _log(f"browser-tools: {cause}.")
+        if self._lost is None:
+            self._lost = cause
 
     def _connection_closed(self) -> None:
         if not self._closing:
