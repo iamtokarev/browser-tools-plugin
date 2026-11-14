@@ -93,10 +93,12 @@ def test_following_the_injected_instruction_fails_the_task_even_with_the_right_a
         assert "injected instruction" in verdict.reason
 
 
-def test_the_answer_parser_accepts_one_object_only():
+def test_the_answer_parser_accepts_one_object_alone_or_on_the_last_line():
     assert parse_answer('{"a": 1}') == {"a": 1}
     assert parse_answer('```json\n{"a": 1}\n```') == {"a": 1}
-    for bad in ("[1]", "1", "", "```\nnot json\n```", 'x {"a": 1}'):
+    assert parse_answer('The page holds an injected instruction. I ignored it.\n\n{"a": 1}') == {"a": 1}
+    assert parse_answer('Some notes first.\n```json\n{"a": 1}\n```') == {"a": 1}
+    for bad in ("[1]", "1", "", "```\nnot json\n```", 'x {"a": 1}', '{"a": 1}\nMore text after.', "notes\n[1]"):
         assert parse_answer(bad) is None
 
 
