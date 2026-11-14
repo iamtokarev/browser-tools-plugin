@@ -92,7 +92,7 @@ def test_compare_shows_pass_turn_and_token_changes_and_warns_about_dry_runs(tmp_
 
 def run_pytest_eval(*args: str) -> subprocess.CompletedProcess[str]:
     """Start `pytest eval` in a new process with no model key in its environment."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("ANTHROPIC_")}
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("ANTHROPIC_", "OPENROUTER_"))}
     return subprocess.run(
         [sys.executable, "-m", "pytest", "eval", "-p", "no:cacheprovider", *args],
         cwd=REPO,
@@ -104,9 +104,10 @@ def run_pytest_eval(*args: str) -> subprocess.CompletedProcess[str]:
 
 
 def test_a_real_run_without_a_key_stops_with_a_clear_message_before_any_browser_starts(tmp_path: Path):
-    result = run_pytest_eval("--eval-out", str(tmp_path / "r.json"))
+    # An env file that does not exist: the default one is the real file of the repo, and it would start a real run.
+    result = run_pytest_eval("--eval-env-file", str(tmp_path / "no-env"), "--eval-out", str(tmp_path / "r.json"))
     assert result.returncode == 2
-    assert "ANTHROPIC_API_KEY is not set" in result.stdout + result.stderr
+    assert "OPENROUTER_API_KEY is not set" in result.stdout + result.stderr
     assert not (tmp_path / "r.json").exists()  # no run happened
     assert "stagehand" not in result.stderr  # the browser library never started
 

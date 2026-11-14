@@ -7,8 +7,7 @@ from typing import Any
 import pytest
 from mcp_types import CallToolResult, ImageContent, TextContent
 
-from eval.agent import Reply, ToolCall, Usage, run_agent, tool_result_blocks
-from eval.anthropic_model import AnthropicModel, MissingApiKey, mcp_tools_to_model_tools, require_api_key
+from eval.agent import Reply, ToolCall, Usage, mcp_tools_to_model_tools, run_agent, tool_result_blocks
 
 TOOLS = [{"name": "run", "description": "d", "input_schema": {"type": "object"}}]
 
@@ -154,38 +153,9 @@ def test_mcp_tools_become_model_tools():
     ]
 
 
-# -- The model client and the key ----------------------------------------------------------
-
-
-def test_a_missing_key_gives_a_clear_message_and_a_present_key_passes():
-    with pytest.raises(MissingApiKey, match="ANTHROPIC_API_KEY is not set"):
-        require_api_key({})
-    with pytest.raises(MissingApiKey):
-        require_api_key({"ANTHROPIC_API_KEY": ""})
-    require_api_key({"ANTHROPIC_API_KEY": "a-fake-value"})
-
-
-async def test_the_anthropic_client_maps_replies_and_usage_without_a_network():
-    seen: dict[str, Any] = {}
-
-    async def create(**kwargs: Any) -> Any:
-        seen.update(kwargs)
-        content = [
-            SimpleNamespace(type="text", text="hi"),
-            SimpleNamespace(type="tool_use", id="u1", name="run", input={"code": "1"}),
-        ]
-        usage = SimpleNamespace(
-            input_tokens=7, output_tokens=3, cache_creation_input_tokens=None, cache_read_input_tokens=40
-        )
-        return SimpleNamespace(content=content, stop_reason="tool_use", usage=usage)
-
-    model = object.__new__(AnthropicModel)
-    model.model = "claude-sonnet-5-5"
-    model.client = SimpleNamespace(messages=SimpleNamespace(create=create))  # ty: ignore[invalid-assignment]
-    reply = await model.complete(system="S", messages=[{"role": "user", "content": "P"}], tools=TOOLS)
-    assert seen["model"] == "claude-sonnet-5-5"
-    assert seen["cache_control"] == {"type": "ephemeral"}
-    assert seen["system"] == "S" and seen["tools"] == TOOLS
-    assert reply.text == "hi"
-    assert reply.tool_calls == [ToolCall("u1", "run", {"code": "1"})]
-    assert reply.usage == Usage(7, 3, 0, 40)
+async def test_a_reply_cut_at_the_token_limit_runs_no_tool():
+    cut = Reply([{"type": "tool_use"}], "", [ToolCall("t1", "run", {"code": "retu"})], "max_tokens", Usage())
+    session = FakeSession()
+    result = await drive(ScriptedModel([cut]), session)
+    assert result.stop == "max_tokens"
+    assert session.calls == []

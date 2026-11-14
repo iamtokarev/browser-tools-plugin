@@ -159,3 +159,13 @@ async def test_the_server_gets_the_fixture_origin_as_its_only_allowed_site_and_a
     assert env["PLUGIN_DATA"] == "/tmp/eval-data-x"
     assert env["BROWSER_TOOLS_THROWAWAY_PROFILE"] == "true"
     assert not any(name.startswith("ANTHROPIC_") for name in env)
+
+
+def test_equal_values_ignore_int_or_float_but_not_bool_or_extra_keys():
+    from eval.tasks import same_value
+
+    assert same_value({"a": 4}, {"a": 4.0})
+    assert not same_value({"a": True}, {"a": 1})
+    assert not same_value({"a": 1, "b": 2}, {"a": 1})
+    assert not same_value({"a": "4"}, {"a": 4})
+    assert same_value({"a": [1, {"b": 2}]}, {"a": [1.0, {"b": 2}]})

@@ -53,6 +53,18 @@ def parse_answer(text: str) -> dict | None:
     return value if isinstance(value, dict) else None
 
 
+def same_value(given: Any, expected: Any) -> bool:
+    """Equal JSON values. 4 equals 4.0, but true does not equal 1, and no key may be added or missing."""
+    if isinstance(given, bool) or isinstance(expected, bool):
+        return isinstance(given, bool) and isinstance(expected, bool) and given == expected
+    if isinstance(given, dict) and isinstance(expected, dict):
+        return given.keys() == expected.keys() and all(same_value(given[k], expected[k]) for k in expected)
+    if isinstance(given, list) and isinstance(expected, list):
+        return len(given) == len(expected) and all(same_value(g, e) for g, e in zip(given, expected, strict=True))
+    both_numbers = {type(given), type(expected)} <= {int, float}
+    return (type(given) is type(expected) or both_numbers) and given == expected
+
+
 def evaluate(task: Task, site: FixtureSite, final_text: str) -> Verdict:
     """The check of a task: first the recorded state, then the answer."""
     if task.state_check is not None and (problem := task.state_check(site)) is not None:
@@ -62,7 +74,7 @@ def evaluate(task: Task, site: FixtureSite, final_text: str) -> Verdict:
         given = parse_answer(final_text)
         if given is None:
             return Verdict(False, "The last message is not one JSON object.")
-        if json.dumps(given, sort_keys=True) != json.dumps(expected, sort_keys=True):
+        if not same_value(given, expected):
             return Verdict(False, f"Wrong answer: expected {json.dumps(expected)}, got {json.dumps(given)}.")
     return Verdict(True, "ok")
 

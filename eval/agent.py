@@ -17,6 +17,10 @@ Stop = Literal["answered", "turn_limit", "max_tokens", "refusal", "model_error",
 STEP_TEXT_LIMIT = 400  # characters of a tool input or result kept in the record
 
 
+class MissingApiKey(Exception):
+    """There is no model key, so a real run cannot start."""
+
+
 @dataclass
 class Usage:
     input_tokens: int = 0
@@ -82,6 +86,10 @@ class AgentResult:
     error: str | None = None
 
 
+def mcp_tools_to_model_tools(tools: list[Any]) -> list[dict[str, Any]]:
+    return [{"name": t.name, "description": t.description or "", "input_schema": t.input_schema} for t in tools]
+
+
 def tool_result_blocks(result: CallToolResult) -> list[dict[str, Any]]:
     """MCP content as the blocks of a model `tool_result`: text and images."""
     blocks: list[dict[str, Any]] = []
@@ -135,6 +143,10 @@ async def run_agent(
             break
         if reply.stop_reason == "pause_turn":
             continue
+        if reply.stop_reason == "max_tokens":
+            result.stop = "max_tokens"  # a cut reply can hold a cut tool call, so no tool runs
+            result.final_text = reply.text
+            break
         if not reply.tool_calls:
             result.stop = (
                 "max_tokens"

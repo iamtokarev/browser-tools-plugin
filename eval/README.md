@@ -5,17 +5,20 @@ It runs ten tasks on fixture pages. It records the pass rate, the model turns, t
 the tokens and the time. A small script compares two result files.
 
 You run it by hand. It is not part of the default `pytest` run. It is not part of CI.
-A real run calls the Anthropic API with your key. It costs money.
+A real run calls the OpenRouter API with your key. It costs money.
 
 ## What it is
 
 - Plain pytest. The tests are in `eval/test_tasks.py`. The agent loop is in `eval/agent.py`.
 - The loop uses the official `mcp` client. It starts the real server over stdio.
   It sets the system prompt and counts every turn and token. DeepEval is not used.
-- Model: Claude Sonnet 5.5 (`claude-sonnet-5-5`). The model name is a setting.
-  The key comes from the `ANTHROPIC_API_KEY` environment variable.
-- The Anthropic SDK is in the dependency group `eval`. It is not a dependency of the server.
-  Use `uv run --group eval` for a real run.
+- Model: Claude Sonnet 5.5 through OpenRouter (`anthropic/claude-sonnet-5.5`). The model name is a setting.
+  The client uses the OpenAI-compatible chat completions API at `https://openrouter.ai/api/v1`.
+  It uses the Python standard library only, so there is no extra dependency group.
+- The key is `OPENROUTER_API_KEY`. The harness reads it from the environment.
+  If it is not set, the harness reads that one line from the `.env` file in the repo root (`--eval-env-file`).
+  The key is never printed or written to a result file. A failure message has the key removed.
+- Every request is sent with no referrer or title header. The prompts hold no project data.
 
 ## Run it
 
@@ -29,8 +32,7 @@ uv run pytest eval --eval-dry-run --eval-repeats 1
 A baseline run, with no skill and no instructions string:
 
 ```
-export ANTHROPIC_API_KEY=...        # your own key
-uv run --group eval pytest eval --eval-setup none --eval-out eval/results/baseline.json
+uv run pytest eval --eval-setup none --eval-out eval/results/baseline.json
 ```
 
 Other setups. Use the same command with another `--eval-setup`:
@@ -56,7 +58,8 @@ uv run python -m eval.compare eval/results/baseline.json eval/results/with-skill
 | Option               | Default            | Meaning                                              |
 | -------------------- | ------------------ | ---------------------------------------------------- |
 | `--eval-setup`       | `none`             | `none`, `instructions` or `skill`.                   |
-| `--eval-model`       | `claude-sonnet-5-5` | The model name.                                     |
+| `--eval-model`       | `anthropic/claude-sonnet-5.5` | The OpenRouter model ID.                 |
+| `--eval-env-file`    | `.env` in the repo root | Where to read `OPENROUTER_API_KEY`, if it is not set. |
 | `--eval-repeats`     | `3`                | Runs of each task.                                   |
 | `--eval-max-turns`   | `30`               | Model calls for one run. The run stops at this number. |
 | `--eval-max-tokens`  | `5000000`          | No new run starts after this token total. The runs left are skipped. |
@@ -103,8 +106,9 @@ There is no judge model.
 - A turn is one model call. Tokens come from the `usage` of each reply.
   `total_tokens` is the sum of input, output, cache-write and cache-read tokens.
   Cache reads are cheap, so `total_tokens` is not the cost. The four numbers are in the file.
-- The client sets `cache_control` at the top level of each request, so a long run
-  pays full price for each token once.
+- The client sets `cache_control` at the top level of each request. A long run then pays the full price for each token one time.
+  On OpenRouter, `prompt_tokens` includes the cached tokens. The harness splits them out.
+  Provider fallback is off, so the model cannot change in a run.
 - Thinking and effort keep the model defaults. There is no fallback model.
   A refusal ends the run, and the file records `refusal`.
 - The scripted solutions in `eval/tasks.py` prove that each task can be solved with the real tools.

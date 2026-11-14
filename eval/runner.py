@@ -9,8 +9,7 @@ from pathlib import Path
 import anyio
 from mcp import Client, StdioServerParameters
 
-from .agent import AgentResult, ModelClient, Usage, run_agent
-from .anthropic_model import mcp_tools_to_model_tools
+from .agent import AgentResult, ModelClient, Usage, mcp_tools_to_model_tools, run_agent
 from .guidance import SKILL_PATH, Setup, build_system_prompt
 from .oracle import OracleModel
 from .results import RunRecord, make_record
@@ -72,6 +71,8 @@ async def run_task(
         verdict = evaluate(task, site, result.final_text)
         if isinstance(model, OracleModel) and model.problems:
             verdict = Verdict(False, "The scripted solution broke: " + "; ".join(model.problems))
+        if verdict.passed and result.stop != "answered":
+            verdict = Verdict(False, f"The run did not end with an answer (stop: {result.stop}).")
         if result.error and not verdict.passed:
             verdict = Verdict(False, f"{verdict.reason} ({result.error})")
         return make_record(task.id, task.kind, repeat, result, verdict.passed, verdict.reason)

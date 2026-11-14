@@ -1,5 +1,6 @@
 """Options and the run state of the eval. Only `pytest eval` loads this file."""
 
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -8,9 +9,9 @@ from typing import Any
 
 import pytest
 
-from .agent import ModelClient
-from .anthropic_model import DEFAULT_MODEL, AnthropicModel, MissingApiKey, require_api_key
+from .agent import MissingApiKey, ModelClient
 from .guidance import SKILL_PATH, Setup, SkillMissing, read_skill
+from .openrouter_model import DEFAULT_MODEL, ENV_FILE, OpenRouterModel, require_api_key
 from .results import RunRecord, token_total, write_results
 from .site import FixtureSite
 from .tasks import TASKS, TASKS_BY_ID, Task
@@ -22,7 +23,8 @@ RESULTS_DIR = Path(__file__).parent / "results"  # ignored by git
 def pytest_addoption(parser: pytest.Parser) -> None:
     group = parser.getgroup("eval", "browser tools eval")
     group.addoption("--eval-setup", choices=[s.value for s in Setup], default=Setup.NONE.value)
-    group.addoption("--eval-model", default=DEFAULT_MODEL)
+    group.addoption("--eval-model", default=DEFAULT_MODEL, help="The OpenRouter model ID.")
+    group.addoption("--eval-env-file", default=str(ENV_FILE), help="Read OPENROUTER_API_KEY from here if not set.")
     group.addoption("--eval-repeats", type=int, default=3)
     group.addoption("--eval-max-turns", type=int, default=30)
     group.addoption("--eval-max-tokens", type=int, default=5_000_000, help="Stop starting new runs above this total.")
@@ -35,6 +37,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 @dataclass
 class EvalRun:
     setup: Setup
+    api_key: str = field(repr=False)
     model_name: str
     repeats: int
     max_turns: int
@@ -76,9 +79,10 @@ def eval_run(request: pytest.FixtureRequest) -> EvalRun:
     """The settings of the run. It stops the session before any browser starts when the key is missing."""
     config = request.config
     dry_run = config.getoption("--eval-dry-run")
+    api_key = ""
     if not dry_run:
         try:
-            require_api_key()
+            api_key = require_api_key(os.environ, Path(config.getoption("--eval-env-file")))
         except MissingApiKey as error:
             pytest.exit(str(error), returncode=2)
     setup = Setup(config.getoption("--eval-setup"))
@@ -87,6 +91,7 @@ def eval_run(request: pytest.FixtureRequest) -> EvalRun:
     )
     run = EvalRun(
         setup=setup,
+        api_key=api_key,
         model_name=config.getoption("--eval-model"),
         repeats=config.getoption("--eval-repeats"),
         max_turns=config.getoption("--eval-max-turns"),
@@ -101,7 +106,7 @@ def eval_run(request: pytest.FixtureRequest) -> EvalRun:
 
 @pytest.fixture(scope="session")
 def real_model(eval_run: EvalRun) -> ModelClient:
-    return AnthropicModel(eval_run.model_name)
+    return OpenRouterModel(eval_run.model_name, key=eval_run.api_key)
 
 
 @pytest.fixture
