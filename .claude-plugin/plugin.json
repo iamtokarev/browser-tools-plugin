@@ -1,0 +1,13 @@
+{
+  "name": "browser-tools",
+  "version": "0.1.0",
+  "description": "Drive a real browser from an agent: read pages, fill forms, and debug web apps. It has an MCP server and a skill.",
+  "author": {
+    "name": "Vasilii Tokarev",
+    "url": "https://github.com/iamtokarev"
+  },
+  "homepage": "https://github.com/iamtokarev/browser-tools-plugin",
+  "repository": "https://github.com/iamtokarev/browser-tools-plugin",
+  "keywords": ["browser", "mcp", "skill", "chrome", "debugging"],
+  "mcpServers": "./mcp.json"
+}

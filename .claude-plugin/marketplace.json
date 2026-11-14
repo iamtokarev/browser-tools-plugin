@@ -1,0 +1,15 @@
+{
+  "name": "browser-tools-plugin",
+  "description": "Browser tools for agents: an MCP server and a skill.",
+  "owner": { "name": "Vasilii Tokarev" },
+  "interface": { "displayName": "Browser tools" },
+  "plugins": [
+    {
+      "name": "browser-tools",
+      "source": "./",
+      "description": "Drive a real browser from an agent: read pages, fill forms, and debug web apps. It has an MCP server and a skill.",
+      "category": "Developer Tools",
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" }
+    }
+  ]
+}

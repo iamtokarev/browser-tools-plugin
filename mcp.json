@@ -1,0 +1,14 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "browser-tools": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/iamtokarev/browser-tools-plugin@v0.1.0",
+        "browser-tools"
+      ]
+    }
+  }
+}
