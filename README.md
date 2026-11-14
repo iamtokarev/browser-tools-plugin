@@ -41,10 +41,11 @@ uvx --from git+https://github.com/iamtokarev/browser-tools-plugin@v0.1.0 browser
 
 ### Claude Code
 
-Install from the marketplace in this repository (Claude Code 2.1.275 or later):
+Add the marketplace in this repository, then install the plugin from it. In a Claude Code session:
 
 ```
-/plugin install browser-tools --marketplace iamtokarev/browser-tools-plugin
+/plugin marketplace add iamtokarev/browser-tools-plugin
+/plugin install browser-tools@browser-tools-plugin
 ```
 
 The same steps in a shell:

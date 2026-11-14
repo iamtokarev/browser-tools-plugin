@@ -150,8 +150,9 @@ def test_the_readme_install_commands_use_the_tag_of_the_package_version():
     assert not stale, f"the README shows an old tag: {stale}"
 
 
-def test_the_readme_installs_the_plugin_from_the_marketplace_in_one_step():
-    assert "/plugin install browser-tools --marketplace iamtokarev/browser-tools-plugin" in _readme()
+def test_the_readme_installs_the_plugin_from_the_marketplace():
+    assert "/plugin marketplace add iamtokarev/browser-tools-plugin" in _readme()
+    assert "/plugin install browser-tools@browser-tools-plugin" in _readme()
 
 
 @pytest.mark.parametrize("heading", ["## Limits", "## Install", "## Settings", "## Release"])
