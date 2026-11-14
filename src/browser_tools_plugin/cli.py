@@ -1,11 +1,16 @@
 """The `browser-tools` command: serve over stdio (the default), or `doctor`."""
 
 import argparse
+import os
+import signal
 import sys
 from collections.abc import Callable, Sequence
 from typing import TextIO
 
-from .facade import find_chrome
+import anyio
+from mcp.server import MCPServer
+
+from .facade import BrowserSession, find_chrome
 from .settings import (
     BOOLEAN_SETTINGS,
     SETTING_NAMES,
@@ -140,6 +145,34 @@ def run_doctor(
     return 0 if healthy else 1
 
 
+SIGTERM_CLOSE_LIMIT = 20.0  # seconds that SIGTERM waits for the browser to close. A full stop can take 12 s.
+
+
+async def serve(server: MCPServer, session: BrowserSession) -> None:
+    """Serve over stdio until stdin ends or, on POSIX, until SIGTERM.
+
+    The end of stdin is the normal exit. The lifespan of the server closes the browser.
+    SIGTERM closes the browser here, and then the process exits at once.
+    A thread that waits for input on stdin cannot be cancelled.
+    It would keep the process alive until the client closes stdin.
+    Windows has no SIGTERM to catch. There, only the end of stdin closes the browser gracefully.
+    """
+
+    async def close_on_sigterm() -> None:
+        with anyio.open_signal_receiver(signal.SIGTERM) as signals:
+            async for _ in signals:
+                with anyio.move_on_after(SIGTERM_CLOSE_LIMIT):
+                    await session.close()
+                sys.stderr.flush()
+                os._exit(0)
+
+    async with anyio.create_task_group() as group:
+        if sys.platform != "win32":
+            group.start_soon(close_on_sigterm)
+        await server.run_stdio_async()
+        group.cancel_scope.cancel()
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     """Read the settings once, then serve or run `doctor`."""
     command, flags = parse_command(sys.argv[1:] if argv is None else argv)
@@ -150,4 +183,5 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     for problem in loaded.problems:
         print(f"browser-tools: {problem.describe()}", file=sys.stderr, flush=True)
-    create_server(loaded.settings, problems=loaded.problems).run()
+    session = BrowserSession(loaded.settings)
+    anyio.run(serve, create_server(session=session, problems=loaded.problems), session)

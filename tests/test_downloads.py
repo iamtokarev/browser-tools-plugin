@@ -204,11 +204,13 @@ def tree(root: Path) -> set[Path]:
 
 
 def strays(tmp_path: Path, settings: Settings) -> set[Path]:
-    """Files under tmp_path that are neither in the download directory nor part of the browser profile."""
+    """Files under tmp_path that are neither in the download directory nor part of the browser profile or its lock."""
     return {
         path
         for path in tree(tmp_path)
-        if settings.download_dir not in path.parents and settings.profile_dir not in path.parents
+        if settings.download_dir not in path.parents
+        and settings.profile_dir not in path.parents
+        and path not in {settings.profile_dir.with_name("default.lock"), settings.profile_dir.with_name("default.pid")}
     }
 
 

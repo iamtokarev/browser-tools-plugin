@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator, Sequence
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
+import anyio
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import best_match
 from mcp.server import MCPServer
@@ -384,6 +385,7 @@ def create_server(
         try:
             yield
         finally:
-            await session.close()
+            with anyio.CancelScope(shield=True):  # a cancelled server must still close the browser
+                await session.close()
 
     return MCPServer(SERVER_NAME, instructions=instructions, tools=tools, lifespan=lifespan)
