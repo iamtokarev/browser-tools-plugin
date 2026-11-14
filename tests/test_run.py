@@ -57,8 +57,10 @@ async def test_description_states_the_limit_and_quiet_wait_and_promises_nothing_
     description = tool.description or ""
     assert "stopped after 45 s" in description
     assert "ends early once the page has been quiet" in description
-    for promise in ("mock", "route", "cdp", "listener", "download", "intercept"):
+    for promise in ("mock", "route", "cdp", "listener", "download event", "waitforevent", "intercept"):
         assert promise not in description.lower()
+    # The description may say that downloads exist, and that page code cannot see them.
+    assert "Page code cannot see downloads" in description
     assert "./stagehand-artifacts" not in description
     assert "size-constrained" not in description
 

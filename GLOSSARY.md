@@ -65,3 +65,7 @@ _Avoid_: ephemeral profile, incognito, temp profile
 **Site limits**:
 The user's optional allow list and deny list of sites the browser may visit, which the agent cannot change.
 _Avoid_: domain filter, allowlist, firewall
+
+**Download directory**:
+The one folder where every file that the browser downloads is saved, under a name that the server chose. The server reports each saved path in a tool result.
+_Avoid_: downloads folder, save location

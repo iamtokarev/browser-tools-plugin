@@ -74,6 +74,12 @@ class _QuietHandler(http.server.SimpleHTTPRequestHandler):
         elif path == "/api/redirect-to":
             target = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)["url"][0]
             self._send(302, b"", "text/plain", {"Location": target})
+        elif path == "/api/download":
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            name = query.get("name", ["file.txt"])[0]
+            raw = query.get("disposition", [f'attachment; filename="{name}"'])[0]
+            body = query.get("body", [f"content of {name}"])[0].encode()
+            self._send(200, body, "application/octet-stream", {"Content-Disposition": raw})
         elif path == "/api/redirect":
             self._send(302, b"", "text/plain", {"Location": "/api/items"})
         else:
@@ -138,6 +144,8 @@ class OtherSite:
                 site.hits.append(self.path)
                 body = b"<!doctype html><title>Other site</title><h1>Other site reached</h1>"
                 self.send_response(200)
+                if self.path.startswith("/attachment"):
+                    self.send_header("Content-Disposition", 'attachment; filename="from-other-site.txt"')
                 self.send_header("Content-Type", "text/html")
                 self.send_header("Content-Length", str(len(body)))
                 self.send_header("Access-Control-Allow-Origin", "*")

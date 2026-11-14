@@ -24,6 +24,7 @@ from stagehand_middleware.facade.tools import StagehandFacadeTools, sanitize_err
 from . import console_text, network_text
 from .capture import Capture
 from .cdp import CdpConnection, CdpError
+from .downloads import Downloads, downloads_notice, seed_download_directory
 from .limits import SiteEnforcer, refusal_notice
 from .results import NO_VALUE, page_code_text
 from .screenshots import (
@@ -112,6 +113,7 @@ class BrowserSession:
         self._connection: CdpConnection | None = None
         self._capture: Capture | None = None
         self._enforcer: SiteEnforcer | None = None
+        self._downloads: Downloads | None = None
         self._lost: str | None = None  # why the browser counts as lost, until the next call reports it
         self._closing = False
 
@@ -136,7 +138,7 @@ class BrowserSession:
             tree = await tools.snapshot(include_iframes=include_iframes)
             header = await asyncio.wait_for(self._header(), self._settings.capture_timeout)
             await self._raise_if_lost()
-            return self._with_refusals(f"{header}\n{tree}")
+            return await self._with_notices(f"{header}\n{tree}")
 
     async def screenshot(
         self, *, full_page: bool = False, type: ImageType = "jpeg", quality: float | None = None
@@ -240,7 +242,7 @@ class BrowserSession:
             text = page_code_text(value)
             if text is None:
                 text = f"{NO_VALUE} {await self._current_url()}"
-            return self._with_refusals(text)
+            return await self._with_notices(text)
 
     async def console(self, *, level: str = "info", all: bool = False, page: str | None = None) -> str:
         """What a page logged: the active page, or the one `page` names.
@@ -296,6 +298,7 @@ class BrowserSession:
         """Close the connection and the browser, and forget both. Never raises."""
         tools, self._tools, self._stagehand = self._tools, None, None
         connection, self._connection, self._capture, self._enforcer = self._connection, None, None, None
+        self._downloads = None
         self._closing = True
         try:
             if connection is not None:
@@ -320,13 +323,19 @@ class BrowserSession:
         await self._teardown()
         raise BrowserLostError(cause)
 
-    def _with_refusals(self, text: str) -> str:
-        """The text, with a last paragraph that says what the site limits refused since the last call."""
-        notice = refusal_notice(self._enforcer.take_refusals()) if self._enforcer is not None else ""
-        return f"{text}\n\n{notice}" if notice else text
+    async def _with_notices(self, text: str) -> str:
+        """The text, with last paragraphs that say what the site limits refused and what was downloaded."""
+        notices = []
+        if self._enforcer is not None:
+            notices.append(refusal_notice(self._enforcer.take_refusals()))
+        if self._downloads is not None:
+            finished, running = await self._downloads.settle()
+            notices.append(downloads_notice(finished, running))
+        return "\n\n".join([text, *(notice for notice in notices if notice)])
 
     async def _ensure_launched(self) -> StagehandFacadeTools:
         if self._tools is not None:
+            await self._hold_download_directory()
             return self._tools
         settings = self._settings
         # The middleware's deadlines are module constants.
@@ -334,12 +343,12 @@ class BrowserSession:
         _upstream_tools.RUN_BATCH_TIMEOUT_MS = round(settings.run_timeout * 1000)  # ty: ignore[invalid-assignment]
         settings.profile_dir.mkdir(parents=True, exist_ok=True)
         settings.download_dir.mkdir(parents=True, exist_ok=True)
+        # Before Chrome starts, so that a download lands in the directory even when no CDP command is in force.
+        seed_download_directory(settings.profile_dir, settings.download_dir)
         browser = await local_browser.launch(
             headless=not settings.headed,
             executable_path=settings.chrome_path,
             user_data_dir=settings.profile_dir,
-            downloads_path=settings.download_dir,
-            accept_downloads=True,
         )
         connection: CdpConnection | None = None
         try:
@@ -347,6 +356,8 @@ class BrowserSession:
             if browser.cdp_url is None:
                 raise RuntimeError("The browser did not report a debugging address.")
             connection = await CdpConnection.connect(browser.cdp_url)
+            downloads = Downloads(connection, settings.download_dir)
+            await downloads.start()  # the SDK's own `downloads_path` overwrites files of the same name
             limits = SiteLimits.from_entries(
                 settings.allow_sites, settings.deny_sites, allow_file_urls=settings.allow_file_urls
             )
@@ -366,6 +377,7 @@ class BrowserSession:
             raise
         connection.add_close_callback(self._connection_closed)
         self._connection, self._capture, self._enforcer = connection, capture, enforcer
+        self._downloads = downloads
         self._stagehand = stagehand
         self._tools = StagehandFacadeTools(
             stagehand,
@@ -373,6 +385,19 @@ class BrowserSession:
             quiet_wait=settings.quiet_wait,
         )
         return self._tools
+
+    async def _hold_download_directory(self) -> None:
+        """Set the download behaviour again before a call, because page code can have changed it.
+
+        When Chrome refuses, the directory is no longer held, so the browser counts as lost.
+        """
+        if self._downloads is None:
+            return
+        try:
+            await self._downloads.assert_directory()
+        except CdpError as error:
+            self._unsafe(f"the download directory could not be set: {error}")
+            await self._raise_if_lost()
 
     def _unsafe(self, cause: str) -> None:
         """The site limits cannot be kept, so the next call reports the browser as lost."""

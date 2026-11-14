@@ -181,7 +181,10 @@ def run_description(settings: Settings) -> str:
         "Split long work into smaller runs. "
         "The user may limit which sites the browser can open. A refused page shows "
         "`Blocked by site limits: ...` and the result ends with `Refused by site limits: ...`. "
-        "Do not try to get around a refusal."
+        "Do not try to get around a refusal. "
+        "A file that the page downloads is saved in the download directory, and a result ends with "
+        "`Downloaded: <path>`. Page code cannot see downloads. "
+        "If page.goto to a file fails with a timeout, call snapshot: the path is in its result."
     )
     if settings.quiet_wait:
         text += (
