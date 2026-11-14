@@ -13,3 +13,4 @@ wheels/
 research/
 
 .env
+eval/results/
