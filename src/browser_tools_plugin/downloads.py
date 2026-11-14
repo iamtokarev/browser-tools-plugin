@@ -31,6 +31,30 @@ NOTICE_LIMIT = 5  # downloads that one notice lists
 NAME_BYTES = 120  # the longest file name, without the number that makes it unique
 FALLBACK_NAME = "download"
 
+NEUTRAL_SUFFIX = ".download"
+
+# Extensions that a system can launch, or run, when a person opens the file. The server names the
+# saved file itself, so Chrome's own checks for dangerous files do not apply. A name with one of
+# these extensions gets NEUTRAL_SUFFIX. The list is a denylist, in lower case, of the executable
+# and launchable types of macOS, Linux and Windows. It is wider than "executable" on purpose:
+# a script, an installer, a shortcut or a settings file all start something.
+RISKY_EXTENSIONS = frozenset(
+    {
+        # macOS
+        "app", "command", "terminal", "scpt", "scptd", "applescript", "osa", "workflow", "action", "wflow",
+        "tool", "pkg", "mpkg", "dmg", "prefpane", "saver", "plugin", "kext", "webloc", "inetloc", "fileloc",
+        # Linux and other Unix
+        "sh", "bash", "zsh", "csh", "ksh", "fish", "run", "bin", "appimage", "desktop", "deb", "rpm",
+        "snap", "flatpakref", "flatpakrepo",
+        # Windows
+        "exe", "com", "bat", "cmd", "msi", "msp", "msix", "appx", "ps1", "psm1", "ps1xml", "psc1", "vbs",
+        "vbe", "vb", "js", "jse", "wsf", "wsh", "hta", "scr", "pif", "lnk", "reg", "cpl", "msc", "url",
+        "dll", "sys", "inf", "gadget", "application", "appref-ms", "chm", "jnlp", "library-ms", "settingcontent-ms",
+        # Java, on every system
+        "jar",
+    }
+)  # fmt: skip
+
 _UNSAFE = re.compile(r'[\x00-\x1f\x7f<>:"|?*\\/]+')
 
 
@@ -47,6 +71,18 @@ def safe_name(suggested: str) -> str:
     extension = extension[:16]
     stem = _cut(stem, NAME_BYTES - len(extension.encode()))
     return f"{stem}{extension}" if stem else FALLBACK_NAME
+
+
+def neutral_name(name: str) -> tuple[str, bool]:
+    """`name`, or `name.download` when its extension is in RISKY_EXTENSIONS (any case).
+
+    Returns the name and whether it changed. A trailing dot or space is ignored when the
+    extension is read, because Windows ignores it too.
+    """
+    extension = os.path.splitext(name.rstrip(". "))[1].lstrip(".").lower()
+    if extension in RISKY_EXTENSIONS:
+        return name + NEUTRAL_SUFFIX, True
+    return name, False
 
 
 def _cut(text: str, limit: int) -> str:
@@ -110,6 +146,7 @@ class Download:
     path: Path | None  # None when it did not finish
     size: int = 0
     outside: bool = False  # the file is not in the download directory, so the server left it where it is
+    neutralised: bool = False  # the name got NEUTRAL_SUFFIX, because its extension can launch a program
 
 
 @dataclass(slots=True)
@@ -137,7 +174,13 @@ def downloads_notice(downloads: list[Download], still_running: int = 0) -> str:
                 "This is not the download directory, and the server left the file there."
             )
         else:
-            parts.append(f"Downloaded: {download.path} ({download.size} bytes) from {download.url}.")
+            line = f"Downloaded: {download.path} ({download.size} bytes) from {download.url}."
+            if download.neutralised:
+                line += (
+                    f" The server added {NEUTRAL_SUFFIX} to the name, because the file type can start a program. "
+                    "Rename the file only if the user asks."
+                )
+            parts.append(line)
     more = len(downloads) - NOTICE_LIMIT
     if more > 0:
         parts.append(f"{more} more downloads finished. Look in the download directory.")
@@ -226,7 +269,7 @@ class Downloads:
             size = source.stat().st_size if source.is_file() else 0
             return Download(pending.url, source, size, outside=True)
         size = source.stat().st_size
-        name = safe_name(pending.suggested)
+        name, neutralised = neutral_name(safe_name(pending.suggested))
         while True:
             target = unique_path(directory, name)
             try:
@@ -240,7 +283,7 @@ class Downloads:
                 break
             os.unlink(source)
             break
-        return Download(pending.url, target, size)
+        return Download(pending.url, target, size, neutralised=neutralised)
 
 
-__all__ = ["Download", "Downloads", "downloads_notice", "safe_name", "seed_download_directory"]
+__all__ = ["Download", "Downloads", "downloads_notice", "neutral_name", "safe_name", "seed_download_directory"]

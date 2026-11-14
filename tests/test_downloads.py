@@ -9,6 +9,8 @@ import asyncio
 import json
 import re
 import stat
+import subprocess
+import sys
 from collections.abc import Iterator
 from dataclasses import replace
 from pathlib import Path
@@ -24,6 +26,7 @@ from browser_tools_plugin.downloads import (
     Download,
     Downloads,
     downloads_notice,
+    neutral_name,
     safe_name,
     seed_download_directory,
     unique_path,
@@ -58,6 +61,27 @@ from tests.conftest import OtherSite, needs_chrome
 )
 def test_a_suggested_name_is_cut_to_one_safe_file_name(suggested: str, expected: str):
     assert safe_name(suggested) == expected
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "x.command", "x.app", "x.sh", "x.exe", "x.pkg", "x.dmg", "x.terminal", "x.scpt", "x.jar", "x.bat",
+        "x.ps1", "x.desktop", "x.AppImage", "X.EXE", "x.Command", "archive.tar.sh", "x.exe.", "x.exe ", "x.lnk",
+    ],
+)  # fmt: skip
+def test_a_launchable_extension_gets_a_neutral_suffix(name: str):
+    neutral, changed = neutral_name(name)
+    assert changed
+    assert neutral == f"{name}.download"
+    assert not neutral.lower().rstrip(". ").endswith(tuple(f".{e}" for e in ("exe", "sh", "command")))
+
+
+@pytest.mark.parametrize(
+    "name", ["report.csv", "photo.jpg", "notes.txt", "archive.tar.gz", "exe", "sh", "download", "a.pdf"]
+)
+def test_an_ordinary_name_is_left_alone(name: str):
+    assert neutral_name(name) == (name, False)
 
 
 def test_a_long_name_is_cut_and_keeps_its_extension():
@@ -113,6 +137,8 @@ def test_the_notice_gives_the_path_and_says_the_file_was_not_opened(tmp_path: Pa
     notice = downloads_notice([Download("http://x.test/a", tmp_path / "a.txt", 12)])
     assert f"Downloaded: {tmp_path / 'a.txt'} (12 bytes) from http://x.test/a." in notice
     assert "does not open or run it" in notice
+    named = downloads_notice([Download("http://x.test/a", tmp_path / "a.sh.download", 3, neutralised=True)])
+    assert "added .download to the name" in named
     assert "did not finish" in downloads_notice([Download("http://x.test/a", None)])
     assert "still running" in downloads_notice([], 1)
     assert downloads_notice([], 0) == ""
@@ -213,6 +239,23 @@ async def test_a_link_click_saves_the_file_and_the_result_gives_the_path(
     assert paths == [str(target)]
     assert not (stat.S_IMODE(target.stat().st_mode) & 0o111)  # never executable
     assert strays(tmp_path, settings) == set()
+
+
+@needs_chrome
+async def test_a_launchable_file_gets_a_neutral_suffix_and_keeps_the_quarantine_attribute(
+    settings: Settings, fixture_url: str, tmp_path: Path, working_directory: Path
+):
+    async with Browser(settings) as browser:
+        await click_link(browser, fixture_url, "/api/download?name=Run%20Me.COMMAND")
+        paths = await browser.until_downloaded()
+    target = settings.download_dir / "Run Me.COMMAND.download"
+    assert paths == [str(target)]
+    assert saved(settings) == {"Run Me.COMMAND.download": "content of Run Me.COMMAND"}
+    assert not (stat.S_IMODE(target.stat().st_mode) & 0o111)
+    if sys.platform == "darwin":
+        names = subprocess.run(["xattr", str(target)], capture_output=True, text=True).stdout.split()
+        # Chrome sets it in allowAndName mode (measured), and the rename links the same file, so it stays.
+        assert "com.apple.quarantine" in names
 
 
 @needs_chrome
