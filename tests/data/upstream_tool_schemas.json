@@ -1,0 +1,191 @@
+{
+  "run": {
+    "additionalProperties": false,
+    "properties": {
+      "actions": {
+        "description": "Snapshot actions with the exact fields \"op\" and \"id\". Do not use \"kind\" or \"ref\".",
+        "items": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "description": "Bracketed ID copied from the latest snapshot, as a string. Use \"id\"; never use \"ref\".",
+                  "type": "string"
+                },
+                "op": {
+                  "const": "click",
+                  "description": "Action operation. Use \"op\": \"click\"; never use a \"kind\" field."
+                }
+              },
+              "required": [
+                "op",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "description": "Bracketed ID copied from the latest snapshot, as a string. Use \"id\"; never use \"ref\".",
+                  "type": "string"
+                },
+                "op": {
+                  "const": "hover",
+                  "description": "Action operation. Use \"op\": \"hover\"; never use a \"kind\" field."
+                }
+              },
+              "required": [
+                "op",
+                "id"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "description": "Bracketed ID copied from the latest snapshot, as a string. Use \"id\"; never use \"ref\".",
+                  "type": "string"
+                },
+                "op": {
+                  "const": "fill",
+                  "description": "Action operation. Use \"op\": \"fill\"; never use a \"kind\" field."
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "op",
+                "id",
+                "value"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "delay": {
+                  "minimum": 0,
+                  "type": "number"
+                },
+                "id": {
+                  "description": "Bracketed ID copied from the latest snapshot, as a string. Use \"id\"; never use \"ref\".",
+                  "type": "string"
+                },
+                "op": {
+                  "const": "type",
+                  "description": "Action operation. Use \"op\": \"type\"; never use a \"kind\" field."
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "op",
+                "id",
+                "text"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "description": "Bracketed ID copied from the latest snapshot, as a string. Use \"id\"; never use \"ref\".",
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string"
+                },
+                "op": {
+                  "const": "press",
+                  "description": "Action operation. Use \"op\": \"press\"; never use a \"kind\" field."
+                }
+              },
+              "required": [
+                "op",
+                "id",
+                "key"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "description": "Bracketed ID copied from the latest snapshot, as a string. Use \"id\"; never use \"ref\".",
+                  "type": "string"
+                },
+                "op": {
+                  "const": "select",
+                  "description": "Action operation. Use \"op\": \"select\"; never use a \"kind\" field."
+                },
+                "values": {
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "items": {
+                        "type": "string"
+                      },
+                      "minItems": 1,
+                      "type": "array"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "op",
+                "id",
+                "values"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "minItems": 1,
+        "type": "array"
+      },
+      "code": {
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "screenshot": {
+    "additionalProperties": false,
+    "properties": {
+      "fullPage": {
+        "type": "boolean"
+      },
+      "quality": {
+        "maximum": 100,
+        "minimum": 0,
+        "type": "number"
+      },
+      "type": {
+        "enum": [
+          "png",
+          "jpeg"
+        ],
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "snapshot": {
+    "additionalProperties": false,
+    "properties": {
+      "includeIframes": {
+        "default": true,
+        "type": "boolean"
+      }
+    },
+    "type": "object"
+  }
+}
