@@ -7,6 +7,7 @@
     "name": "Vasilii Tokarev",
     "url": "https://github.com/iamtokarev"
   },
+  "license": "MIT",
   "homepage": "https://github.com/iamtokarev/browser-tools-plugin",
   "repository": "https://github.com/iamtokarev/browser-tools-plugin",
   "keywords": ["browser", "mcp", "skill", "chrome", "debugging"]

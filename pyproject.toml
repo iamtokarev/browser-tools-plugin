@@ -1,8 +1,10 @@
 [project]
 name = "browser-tools-plugin"
 version = "0.1.0"
-description = "Add your description here"
+description = "Drive a real browser from an agent: read pages, fill forms, and debug web apps. It has an MCP server and a skill."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 authors = [
     { name = "Vasilii Tokarev", email = "notsoyunng@gmail.com" }
 ]
