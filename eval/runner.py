@@ -29,7 +29,8 @@ def server_environment(data_dir: Path, site: FixtureSite) -> dict[str, str]:
     env = {
         name: value
         for name, value in os.environ.items()
-        if not name.startswith(("BROWSER_TOOLS_", "ANTHROPIC_")) and name not in ("PLUGIN_DATA", "CLAUDE_PLUGIN_DATA")
+        if not name.startswith(("BROWSER_TOOLS_", "ANTHROPIC_", "OPENROUTER_"))
+        and name not in ("PLUGIN_DATA", "CLAUDE_PLUGIN_DATA")
     }
     return env | {
         "PLUGIN_DATA": str(data_dir),

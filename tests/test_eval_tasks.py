@@ -150,15 +150,19 @@ async def test_a_wrong_scripted_answer_fails_on_a_real_browser():
     assert "Wrong answer" in record.reason
 
 
-async def test_the_server_gets_the_fixture_origin_as_its_only_allowed_site_and_a_temporary_data_directory():
+async def test_the_server_gets_the_fixture_origin_as_its_only_allowed_site_and_a_temporary_data_directory(
+    monkeypatch,
+):
     from eval.runner import server_environment
 
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-key")
     with FixtureSite(1) as site:
         env = server_environment(Path("/tmp/eval-data-x"), site)
     assert env["BROWSER_TOOLS_ALLOW_SITES"] == site.origin
     assert env["PLUGIN_DATA"] == "/tmp/eval-data-x"
     assert env["BROWSER_TOOLS_THROWAWAY_PROFILE"] == "true"
-    assert not any(name.startswith("ANTHROPIC_") for name in env)
+    assert not any(name.startswith(("ANTHROPIC_", "OPENROUTER_")) for name in env)
 
 
 def test_equal_values_ignore_int_or_float_but_not_bool_or_extra_keys():
