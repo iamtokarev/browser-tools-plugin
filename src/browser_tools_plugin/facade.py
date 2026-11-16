@@ -108,6 +108,8 @@ THROWAWAY_NOTICE = (
 
 _LOST_EXITED = "the browser process exited"
 _LOST_DROPPED = "the connection to the browser dropped"
+_EXIT_CHECKS = 20  # times 0.05 s: how long a dropped connection waits for the process to end
+_EXIT_CHECK_INTERVAL = 0.05
 _LOST_NO_TAB = "the last tab was closed"
 
 
@@ -338,17 +340,33 @@ class BrowserSession:
         """Mark the browser as lost when its process is gone, its connection is closed or it has no tab."""
         if self._tools is None:
             return
-        if self._chrome is not None and not self._chrome.running and self._lost in (None, _LOST_DROPPED):
+        if self._lost is None and self._chrome is not None and not self._chrome.running:
             self._lost = _LOST_EXITED
-        if self._lost is not None or self._connection is None:
-            return
-        try:
-            reply = await self._connection.send("Target.getTargets")
-        except CdpError:
-            self._lost = _LOST_DROPPED
-            return
-        if not any(target.get("type") == "page" for target in reply.get("targetInfos", [])):
-            self._lost = _LOST_NO_TAB
+        if self._lost is None and self._connection is not None:
+            try:
+                reply = await self._connection.send("Target.getTargets")
+            except CdpError:
+                self._lost = _LOST_DROPPED
+            else:
+                if not any(target.get("type") == "page" for target in reply.get("targetInfos", [])):
+                    self._lost = _LOST_NO_TAB
+                return
+        if self._lost == _LOST_DROPPED and await self._chrome_exits_soon():
+            self._lost = _LOST_EXITED
+
+    async def _chrome_exits_soon(self) -> bool:
+        """True when our Chrome is gone, or goes within a short wait.
+
+        A process that is killed closes its sockets before the system shows it as ended. So the connection
+        can drop a short time before the process is gone, and the cause is then the exit, not the connection.
+        """
+        if self._chrome is None:
+            return False
+        for _ in range(_EXIT_CHECKS):
+            if not self._chrome.running:
+                return True
+            await asyncio.sleep(_EXIT_CHECK_INTERVAL)
+        return not self._chrome.running
 
     async def _teardown(self, *, final: bool = False) -> None:
         """Close the connection and stop the browser, and forget both. Never raises.
