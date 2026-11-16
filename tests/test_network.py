@@ -554,7 +554,6 @@ async def test_failed_url_and_types_filters(session: BrowserSession, fixture_url
         by_url = await call(client, "network", all=True, url="API/ITEMS")
         every_type = await call(client, "network", all=True, types="all")
     assert sorted(re.sub(r"^\[r\d+\] GET (\S+) .*/([\w.]+)( \(.*)?$", r"\1 \2", line) for line in lines_of(failed)) == [
-        "404 favicon.ico",  # Chrome asks for it by itself
         "404 missing",
         "failed refused",
     ]
